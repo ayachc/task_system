@@ -31,7 +31,7 @@
             
             <div class="mt-5 px-3 text-muted small">
               <div>版本: 0.1.0</div>
-              <div class="mt-2">©2025 个人用LLM训练管理系统</div>
+              <div class="mt-2">2025 个人用LLM训练管理系统</div>
             </div>
           </div>
         </nav>
@@ -48,9 +48,9 @@
                 </router-link>
               </div>
               <div v-if="$route.path === '/templates'">
-                <router-link to="/templates/new" class="btn btn-sm btn-primary">
+                <b-button class="btn btn-sm btn-primary" @click="$root.$emit('show-create-template-modal')">
                   <i class="bi bi-plus"></i> 新建模板
-                </router-link>
+                </b-button>
               </div>
             </div>
           </div>

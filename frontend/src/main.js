@@ -12,10 +12,6 @@ import 'bootstrap-vue/dist/bootstrap-vue.css'
 Vue.use(BootstrapVue)
 Vue.use(IconsPlugin)
 
-// 配置全局API基础URL
-import axios from 'axios'
-axios.defaults.baseURL = 'http://localhost:5000/api'
-
 // 全局错误处理
 Vue.config.errorHandler = function (err, vm, info) {
   console.error('Vue错误:', err)

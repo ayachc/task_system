@@ -1,4 +1,3 @@
-import axios from 'axios'
 import { taskApi } from '@/services/api'
 
 // 初始状态

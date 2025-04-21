@@ -339,11 +339,19 @@ export default {
   },
   
   async created() {
+    // 监听创建模板事件
+    this.$root.$on('show-create-template-modal', this.showCreateModal);
+    
     try {
       await this.fetchTemplates()
     } catch (error) {
       console.error('获取模板列表失败:', error)
     }
+  },
+  
+  beforeDestroy() {
+    // 移除事件监听
+    this.$root.$off('show-create-template-modal', this.showCreateModal);
   }
 }
 </script>

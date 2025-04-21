@@ -11,7 +11,7 @@ class Config:
     """应用配置类"""
     # 基础配置
     DEBUG = True
-    PORT = 5000
+    PORT = 5050
     SECRET_KEY = 'llm-task-system-secret-key'
     
     # 数据库配置
@@ -31,4 +31,4 @@ class Config:
     SUB_AGENT_HEARTBEAT_INTERVAL = 1   # 子Agent心跳间隔（秒）
     
     # API服务器地址
-    SERVER_URL = 'http://localhost:5000'  # 服务器地址，Agent使用此地址连接服务器
+    SERVER_URL = 'http://localhost:5050'  # 服务器地址，Agent使用此地址连接服务器

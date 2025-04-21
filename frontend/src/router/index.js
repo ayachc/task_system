@@ -7,7 +7,6 @@ const TaskNew = () => import('../views/Tasks/TaskNew.vue')
 const TaskDetail = () => import('../views/Tasks/TaskDetail.vue')
 const AgentList = () => import('../views/Agents/AgentList.vue')
 const TemplateList = () => import('../views/Templates/TemplateList.vue')
-const TemplateNew = () => import('../views/Templates/TemplateNew.vue')
 
 Vue.use(VueRouter)
 
@@ -41,11 +40,6 @@ const routes = [
     path: '/templates',
     name: 'TemplateList',
     component: TemplateList
-  },
-  {
-    path: '/templates/new',
-    name: 'TemplateNew',
-    component: TemplateNew
   },
   {
     path: '*',
