@@ -158,22 +158,8 @@ class Task:
         
         # 构建任务实例
         task = cls(
-            id=task_data['id'],
-            name=task_data['name'],
-            template_type=task_data['template_type'],
-            priority=task_data['priority'],
-            status=task_data['status'],
-            created_time=task_data['created_time'],
-            script_content=task_data['script_content'],
-            cpu_cores=task_data['cpu_cores'],
-            gpu_count=task_data['gpu_count'],
-            gpu_memory=task_data['gpu_memory'],
-            start_time=task_data['start_time'],
-            end_time=task_data['end_time'],
-            execution_time=task_data['execution_time'],
-            agent_id=task_data['agent_id'],
-            log_file=task_data['log_file'],
-            depends_on=depends_on
+            depends_on=depends_on,
+            **task_data
         )
         
         return task

@@ -67,26 +67,9 @@ class TaskService:
         return task
     
     def get_task_by_id(self, task_id):
-        """根据ID获取任务
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            task: 任务实例，如果不存在则返回None
-        """
         return Task.get_task_by_id(task_id)
     
     def get_task_in_range(self, start_id, end_id):
-        """获取指定ID范围内的任务
-        
-        Args:
-            start_id: 起始ID
-            end_id: 结束ID
-            
-        Returns:
-            list: 任务实例列表
-        """
         return Task.get_task_in_range(start_id, end_id)
     
     def get_task_in_page(self, page=1, per_page=10, filters=None):
@@ -219,7 +202,7 @@ class TaskService:
         
         return tasks
     
-    def update_task(self, task):
+    def update_task(self, task: Task):
         """更新任务
         
         Args:
