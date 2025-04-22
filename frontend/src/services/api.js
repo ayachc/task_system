@@ -69,67 +69,67 @@ api.interceptors.response.use(
 // 任务相关API
 export const taskApi = {
   // 获取任务列表
-  getTasks: (params = {}) => api.get('/task/', { params }),
+  getTasks: (params = {}) => api.get('/tasks/', { params }),
   
   // 获取单个任务
-  getTask: (taskId) => api.get(`/task/${taskId}`),
+  getTask: (taskId) => api.get(`/tasks/${taskId}`),
   
   // 创建任务
-  createTask: (taskData) => api.post('/task/', taskData),
+  createTask: (taskData) => api.post('/tasks/', taskData),
   
   // 更新任务
-  updateTask: (taskId, taskData) => api.put(`/task/${taskId}`, taskData),
+  updateTask: (taskId, taskData) => api.put(`/tasks/${taskId}`, taskData),
   
   // 取消任务
-  cancelTask: (taskId) => api.post(`/task/${taskId}/cancel`),
+  cancelTask: (taskId) => api.post(`/tasks/${taskId}/cancel`),
   
   // 获取任务日志
-  getTaskLog: (taskId, params = {}) => api.get(`/task/${taskId}/log`, { params }),
+  getTaskLog: (taskId, params = {}) => api.get(`/tasks/${taskId}/log`, { params }),
   
   // 添加任务日志 (适用于手动添加日志)
-  appendTaskLog: (taskId, content) => api.post(`/task/${taskId}/log`, { content })
+  appendTaskLog: (taskId, content) => api.post(`/tasks/${taskId}/log`, { content })
 }
 
 // Agent相关API
 export const agentApi = {
   // 获取所有Agent
-  getAgents: (params = {}) => api.get('/agent/', { params }),
+  getAgents: (params = {}) => api.get('/agents/', { params }),
   
   // 获取单个Agent
-  getAgent: (agentId) => api.get(`/agent/${agentId}`),
+  getAgent: (agentId) => api.get(`/agents/${agentId}`),
   
   // 创建主Agent
-  createMainAgent: (agentData) => api.post('/agent/main', agentData),
+  createMainAgent: (agentData) => api.post('/agents/main', agentData),
   
   // 创建子Agent
-  createSubAgent: (agentData) => api.post('/agent/sub', agentData),
+  createSubAgent: (agentData) => api.post('/agents/sub', agentData),
   
   // 取消Agent
-  cancelAgent: (agentId) => api.post(`/agent/${agentId}/cancel`),
+  cancelAgent: (agentId) => api.post(`/agents/${agentId}/cancel`),
   
   // 发送心跳
-  sendHeartbeat: (agentId, data) => api.post(`/agent/${agentId}/heartbeat`, data),
+  sendHeartbeat: (agentId, data) => api.post(`/agents/${agentId}/heartbeat`, data),
   
   // 检查所有Agent状态
-  checkAgentsStatus: () => api.post('/agent/check-status')
+  checkAgentsStatus: () => api.post('/agents/check-status')
 }
 
 // 模板相关API
 export const templateApi = {
   // 获取所有模板
-  getTemplates: (params = {}) => api.get('/template/', { params }),
+  getTemplates: (params = {}) => api.get('/templates/', { params }),
   
   // 获取单个模板
-  getTemplate: (templateId) => api.get(`/template/${templateId}`),
+  getTemplate: (templateId) => api.get(`/templates/${templateId}`),
   
   // 创建模板
-  createTemplate: (templateData) => api.post('/template/', templateData),
+  createTemplate: (templateData) => api.post('/templates/', templateData),
   
   // 更新模板
-  updateTemplate: (templateId, templateData) => api.put(`/template/${templateId}`, templateData),
+  updateTemplate: (templateId, templateData) => api.put(`/templates/${templateId}`, templateData),
   
   // 删除模板
-  deleteTemplate: (templateId) => api.delete(`/template/${templateId}`)
+  deleteTemplate: (templateId) => api.delete(`/templates/${templateId}`)
 }
 
 export default api
