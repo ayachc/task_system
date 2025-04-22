@@ -8,9 +8,13 @@
 import os
 import sqlite3
 import logging
+import threading
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# 线程本地存储，用于保存每个线程的数据库连接
+local = threading.local()
 
 class Database:
     """数据库操作类"""
@@ -28,24 +32,26 @@ class Database:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
         self.db_path = db_path
-        self.conn = None
-    
+        
     def connect(self):
         """建立数据库连接"""
+        if hasattr(local, 'conn') and local.conn:
+            return local.conn
+            
         try:
-            self.conn = sqlite3.connect(self.db_path)
-            self.conn.row_factory = sqlite3.Row  # 设置返回结果为字典格式
+            local.conn = sqlite3.connect(self.db_path)
+            local.conn.row_factory = sqlite3.Row  # 设置返回结果为字典格式
             logger.info(f"连接到数据库: {self.db_path}")
-            return self.conn
+            return local.conn
         except Exception as e:
             logger.error(f"数据库连接失败: {str(e)}")
             raise
     
     def close(self):
         """关闭数据库连接"""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+        if hasattr(local, 'conn') and local.conn:
+            local.conn.close()
+            local.conn = None
             logger.info("数据库连接已关闭")
     
     def execute(self, query, params=None):
@@ -58,19 +64,18 @@ class Database:
         Returns:
             cursor: 执行结果游标
         """
-        if not self.conn:
-            self.connect()
+        conn = self.connect()
         
-        cursor = self.conn.cursor()
+        cursor = conn.cursor()
         try:
             if params:
                 cursor.execute(query, params)
             else:
                 cursor.execute(query)
-            self.conn.commit()
+            conn.commit()
             return cursor
         except Exception as e:
-            self.conn.rollback()
+            conn.rollback()
             logger.error(f"SQL执行错误: {str(e)}, 查询: {query}, 参数: {params}")
             raise
     
@@ -184,6 +189,4 @@ db = Database()
 
 def get_db():
     """获取数据库实例"""
-    if not db.conn:
-        db.connect()
     return db
