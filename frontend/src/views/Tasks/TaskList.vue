@@ -107,7 +107,7 @@
       ok-title="确认取消" 
       ok-variant="danger"
       cancel-title="返回"
-      @ok="cancelTask"
+      @ok="doCancelTask"
     >
       <p>您确认要取消任务 <strong>{{ selectedTask ? selectedTask.name : '' }}</strong> 吗？</p>
       <p class="text-danger">此操作不可撤销！已取消的任务将不会被执行。</p>
@@ -229,7 +229,7 @@ export default {
     },
     
     // 执行取消任务
-    async cancelTask() {
+    async doCancelTask() {
       if (!this.selectedTask) return
       
       try {

@@ -272,6 +272,7 @@ class TaskService:
         Returns:
             bool: 取消是否成功
         """
+        print(f"取消任务: ID={task_id}")
         task = Task.get_task_by_id(task_id)
         if not task:
             system_logger.error(f"取消任务失败: 任务不存在: ID={task_id}")
@@ -282,10 +283,12 @@ class TaskService:
             # 这里暂不处理，需要在Agent模块中实现
             pass
         
+        print(f"取消任务: ID={task_id}")
         # 记录取消操作日志
         logger = get_task_logger(task.id)
         logger.info(f"任务被取消")
         
+        print(f"取消任务: ID={task_id}")
         return task.cancel_task()
     
     def append_task_log(self, task_id, log_content):

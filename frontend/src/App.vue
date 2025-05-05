@@ -6,7 +6,7 @@
         <nav id="sidebar" class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
           <div class="sidebar-sticky pt-3">
             <h5 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-1 text-muted">
-              <span>LLM任务管理系统</span>
+              <span>脚本执行任务管理系统</span>
             </h5>
             <ul class="nav flex-column">
               <li class="nav-item">
@@ -31,7 +31,7 @@
             
             <div class="mt-5 px-3 text-muted small">
               <div>版本: 0.1.0</div>
-              <div class="mt-2">2025 个人用LLM训练管理系统</div>
+              <div class="mt-2">2025 脚本执行任务管理系统</div>
             </div>
           </div>
         </nav>
