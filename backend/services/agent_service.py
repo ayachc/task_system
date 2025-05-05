@@ -20,13 +20,14 @@ class AgentService:
         self.db = get_db()
         self.task_service = TaskService()
     
-    def create_main_agent(self, name, cpu_cores, gpu_ids=None):
+    def create_main_agent(self, name, cpu_cores, gpu_ids=None, monitor_file=None):
         """创建主Agent
         
         Args:
             name: Agent名称
             cpu_cores: CPU核心数
             gpu_ids: GPU ID列表
+            monitor_file: 监控文件路径
             
         Returns:
             agent: 新创建的主Agent
@@ -41,7 +42,8 @@ class AgentService:
             name=name,
             type='main',
             cpu_cores=cpu_cores,
-            gpu_ids=gpu_ids
+            gpu_ids=gpu_ids,
+            monitor_file=monitor_file
         )
         
         # 记录Agent创建日志

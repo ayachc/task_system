@@ -96,7 +96,8 @@ def create_main_agent():
         agent = agent_service.create_main_agent(
             name=data['name'],
             cpu_cores=data['cpu_cores'],
-            gpu_ids=data.get('gpu_ids', [])
+            gpu_ids=data.get('gpu_ids', []),
+            monitor_file=data.get('monitor_file')
         )
         
         if not agent:
