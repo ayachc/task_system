@@ -368,8 +368,8 @@ if __name__ == "__main__":
     
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="主Agent程序")
-    parser.add_argument("--name", help="Agent名称")
-    parser.add_argument("--server", help="服务器URL")
+    parser.add_argument("--name", help="Agent名称", default="main_agent")
+    parser.add_argument("--server", help="服务器URL", default="http://localhost:5050")
     
     args = parser.parse_args()
     
