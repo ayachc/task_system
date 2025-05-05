@@ -152,23 +152,12 @@ class Database:
             cpu_cores INTEGER,
             cpu_usage REAL DEFAULT 0,
             memory_usage REAL DEFAULT 0,
+            gpu_info TEXT DEFAULT '[]',
             task_id INTEGER,
             main_agent_id TEXT,
             available_cpu_cores INTEGER,
+            monitor_file TEXT,
             FOREIGN KEY (task_id) REFERENCES tasks (id)
-        )
-        ''')
-        
-        # Agent GPU表
-        self.execute('''
-        CREATE TABLE IF NOT EXISTS agent_gpus (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_id TEXT NOT NULL,
-            gpu_id TEXT NOT NULL,
-            gpu_usage REAL DEFAULT 0,
-            gpu_memory_usage REAL DEFAULT 0,
-            is_available INTEGER DEFAULT 1,
-            FOREIGN KEY (agent_id) REFERENCES agents (id)
         )
         ''')
         

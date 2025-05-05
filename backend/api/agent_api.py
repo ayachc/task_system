@@ -30,18 +30,14 @@ def get_agents():
         # 解析过滤参数
         agent_type = request.args.get('type')
         status = request.args.get('status')
-        main_agent_id = request.args.get('main_agent_id')
         
-        # 根据类型获取不同的Agent列表
-        if agent_type == 'main':
-            agents = agent_service.get_main_agents(filter_status=status)
-        elif agent_type == 'sub':
-            agents = agent_service.get_sub_agents(main_agent_id=main_agent_id, filter_status=status)
-        else:
-            agents = agent_service.get_all_agents(filter_type=agent_type, filter_status=status)
+        agents = agent_service.get_all_agents(filter_type=agent_type, filter_status=status)
         
         # 转换Agent为字典
         agents_dict = [agent.to_dict() for agent in agents]
+
+        if 2333:
+            print(agents_dict)
         
         return jsonify({
             'success': True,

@@ -2,17 +2,16 @@
   <div class="agent-list">
     <h3 class="mb-4">Agent管理</h3>
     
-    <!-- 刷新和检查状态按钮 -->
-    <div class="d-flex justify-content-end mb-3">
+    <!-- 刷新按钮和新建主Agent按钮 -->
+    <div class="d-flex justify-content-between mb-3">
       <b-button 
-        variant="outline-secondary" 
-        class="mr-2" 
-        @click="handleCheckAgentsStatus"
-        :disabled="loading"
+        variant="primary" 
+        size="sm"
+        @click="showCreateAgentModal"
       >
-        <b-icon icon="arrow-repeat" class="mr-1"></b-icon>
-        检查Agent状态
+        <b-icon icon="plus"></b-icon> 创建主Agent
       </b-button>
+      
       <b-button 
         variant="outline-primary" 
         @click="refreshAgents"
@@ -37,23 +36,18 @@
     <!-- 无Agent提示 -->
     <b-alert v-if="!loading && mainAgents.length === 0" show variant="info">
       暂无Agent信息。您可以创建一个主Agent来开始任务调度系统。
-      <div class="mt-2">
-        <b-button variant="primary" size="sm" @click="showCreateAgentModal">
-          <b-icon icon="plus"></b-icon> 创建主Agent
-        </b-button>
-      </div>
     </b-alert>
     
     <!-- Agent列表 -->
     <div v-else class="agent-tree">
       <!-- 主Agent列表 -->
-      <div v-for="agent in mainAgents" :key="agent.id" class="mb-4">
+      <div v-for="agent in mainAgents" :key="agent.id" class="mb-5">
         <!-- 主Agent卡片 -->
         <b-card 
           :class="['main-agent-card', { 'offline': agent.status === 'offline' }]"
           no-body
         >
-          <b-card-header class="d-flex justify-content-between align-items-center">
+          <b-card-header class="d-flex justify-content-between align-items-center py-2">
             <div>
               <b-badge variant="primary" class="mr-2">主</b-badge>
               <strong>{{ agent.name }}</strong>
@@ -66,8 +60,8 @@
               >
                 {{ getStatusText(agent.status) }}
               </b-badge>
-              <small class="text-muted">
-                <b-icon icon="clock"></b-icon>
+              <small class="text-muted mr-2">
+                <b-icon icon="clock-history"></b-icon>
                 运行时长: {{ formatDuration(agent.running_time) }}
               </small>
               <b-button 
@@ -82,77 +76,106 @@
             </div>
           </b-card-header>
           
-          <b-card-body>
-            <!-- CPU资源展示 -->
-            <div class="resource-section mb-3">
-              <h6 class="mb-2">CPU资源</h6>
-              <div class="d-flex align-items-center">
-                <strong class="mr-2">使用率:</strong>
-                <b-progress 
-                  :value="agent.cpu_usage || 0" 
-                  :max="100" 
-                  class="flex-grow-1"
-                  :variant="getResourceVariant(agent.cpu_usage || 0)"
-                  show-progress
-                  height="1.5rem"
-                >
-                  <span>{{ agent.cpu_usage || 0 }}%</span>
-                </b-progress>
+          <b-card-body class="py-3">
+            <!-- 基本信息展示区域 -->
+            <div class="agent-info-grid mb-3">
+              <div class="info-item">
+                <small class="text-muted">创建时间：</small>
+                <div>{{ formatTime(agent.created_time) }}</div>
               </div>
-              <div class="mt-2">
-                <strong>核心数:</strong> 
-                {{ agent.cpu_cores || 0 }} 核 
-                (可用: {{ agent.available_cpu_cores || 0 }} 核)
+              <div class="info-item">
+                <small class="text-muted">上次心跳：</small>
+                <div>{{ formatTime(agent.last_heartbeat_time) }}</div>
+              </div>
+              <div class="info-item">
+                <small class="text-muted">CPU核心数：</small>
+                <div>{{ agent.cpu_cores || 0 }} 核 (可用: {{ agent.available_cpu_cores || 0 }} 核)</div>
+              </div>
+              <div class="info-item">
+                <small class="text-muted">CPU使用率：</small>
+                <div class="d-flex align-items-center">
+                  <b-progress 
+                    :value="agent.cpu_usage || 0" 
+                    :max="100" 
+                    class="flex-grow-1 mr-2"
+                    :variant="getResourceVariant(agent.cpu_usage || 0)"
+                    height="0.7rem"
+                  ></b-progress>
+                  <span class="text-nowrap">{{ agent.cpu_usage || 0 }}%</span>
+                </div>
+              </div>
+              <div class="info-item">
+                <small class="text-muted">内存使用率：</small>
+                <div class="d-flex align-items-center">
+                  <b-progress 
+                    :value="agent.memory_usage || 0" 
+                    :max="100" 
+                    class="flex-grow-1 mr-2"
+                    :variant="getResourceVariant(agent.memory_usage || 0)"
+                    height="0.7rem"
+                  ></b-progress>
+                  <span class="text-nowrap">{{ agent.memory_usage || 0 }}%</span>
+                </div>
+              </div>
+              <div class="info-item" v-if="agent.monitor_file">
+                <small class="text-muted">监控文件：</small>
+                <div>{{ agent.monitor_file }}</div>
               </div>
             </div>
             
             <!-- GPU资源展示 -->
-            <div class="resource-section" v-if="agent.gpu_ids && agent.gpu_ids.length > 0">
+            <div class="resource-section" v-if="agent.gpu_info && agent.gpu_info.length > 0">
               <h6 class="mb-2">GPU资源</h6>
-              <div v-for="(gpu, index) in agent.gpu_usage || []" :key="index" class="mb-2">
-                <strong>GPU {{ agent.gpu_ids[index] || index }}:</strong>
-                <div class="d-flex mt-1">
-                  <div class="mr-3 text-nowrap">
-                    <small>使用率:</small>
+              <b-row class="gpu-grid">
+                <b-col md="6" lg="4" v-for="(gpu, index) in agent.gpu_info" :key="index" class="mb-2">
+                  <div class="gpu-card p-2">
+                    <div class="d-flex justify-content-between">
+                      <strong>GPU {{ gpu.gpu_id }}</strong>
+                      <b-badge 
+                        :variant="gpu.is_available ? 'success' : 'secondary'"
+                      >
+                        {{ gpu.is_available ? '可用' : '使用中' }}
+                      </b-badge>
+                    </div>
+                    <div class="mt-2">
+                      <small class="d-block mb-1">使用率:</small>
+                      <b-progress 
+                        :value="gpu.usage || 0" 
+                        :max="100" 
+                        :variant="getResourceVariant(gpu.usage || 0)"
+                        class="mb-2"
+                        height="0.6rem"
+                      >
+                        <span>{{ gpu.usage || 0 }}%</span>
+                      </b-progress>
+                    </div>
+                    <div>
+                      <small class="d-block mb-1">显存:</small>
+                      <b-progress 
+                        :value="gpu.memory_used || 0" 
+                        :max="gpu.memory_total || 1" 
+                        variant="info"
+                        class="mb-1"
+                        height="0.6rem"
+                      ></b-progress>
+                      <div class="d-flex justify-content-between">
+                        <small>{{ formatMemory(gpu.memory_used) }}</small>
+                        <small>{{ formatMemory(gpu.memory_total) }}</small>
+                      </div>
+                    </div>
                   </div>
-                  <b-progress 
-                    :value="gpu.usage || 0" 
-                    :max="100" 
-                    class="flex-grow-1 mr-3"
-                    :variant="getResourceVariant(gpu.usage || 0)"
-                    show-progress
-                  >
-                    <span>{{ gpu.usage || 0 }}%</span>
-                  </b-progress>
-                </div>
-                <div class="d-flex mt-1">
-                  <div class="mr-3 text-nowrap">
-                    <small>显存:</small>
-                  </div>
-                  <b-progress 
-                    :value="gpu.memory_used || 0" 
-                    :max="gpu.memory_total || 1" 
-                    class="flex-grow-1 mr-3"
-                    variant="success"
-                    show-progress
-                  >
-                    <span>{{ gpu.memory_used || 0 }} / {{ gpu.memory_total || 0 }} MB</span>
-                  </b-progress>
-                </div>
-              </div>
-              <div v-if="!agent.gpu_usage || agent.gpu_usage.length === 0" class="text-muted">
-                无GPU使用数据
-              </div>
+                </b-col>
+              </b-row>
             </div>
           </b-card-body>
         </b-card>
         
         <!-- 子Agent列表 -->
-        <div class="sub-agents ml-5 mt-2">
+        <div class="sub-agents ml-4 mt-3">
           <div 
             v-for="subAgent in getSubAgentsByMainId(agent.id)" 
             :key="subAgent.id" 
-            class="mb-2"
+            class="mb-3"
           >
             <b-card 
               :class="['sub-agent-card', { 'offline': subAgent.status === 'offline' }]"
@@ -175,8 +198,8 @@
                     <b-icon icon="card-list"></b-icon>
                     任务ID: <b-link :to="`/tasks/${subAgent.task_id}`">{{ subAgent.task_id }}</b-link>
                   </small>
-                  <small class="text-muted">
-                    <b-icon icon="clock"></b-icon>
+                  <small class="text-muted mr-2">
+                    <b-icon icon="clock-history"></b-icon>
                     运行时长: {{ formatDuration(subAgent.running_time) }}
                   </small>
                   <b-button 
@@ -191,35 +214,91 @@
                 </div>
               </b-card-header>
               
-              <b-card-body class="py-2">
-                <!-- GPU使用情况 -->
-                <div v-if="subAgent.gpu_ids && subAgent.gpu_ids.length > 0">
-                  <div v-for="(gpu, index) in subAgent.gpu_usage || []" :key="index" class="mb-1">
+              <b-card-body class="py-3">
+                <!-- 基本信息展示区域 -->
+                <div class="agent-info-grid">
+                  <div class="info-item">
+                    <small class="text-muted">创建时间：</small>
+                    <div>{{ formatTime(subAgent.created_time) }}</div>
+                  </div>
+                  <div class="info-item">
+                    <small class="text-muted">上次心跳：</small>
+                    <div>{{ formatTime(subAgent.last_heartbeat_time) }}</div>
+                  </div>
+                  <div class="info-item">
+                    <small class="text-muted">CPU核心数：</small>
+                    <div>{{ subAgent.cpu_cores || 0 }} 核</div>
+                  </div>
+                  <div class="info-item">
+                    <small class="text-muted">CPU使用率：</small>
                     <div class="d-flex align-items-center">
-                      <small class="text-nowrap mr-2">GPU {{ subAgent.gpu_ids[index] || index }}:</small>
                       <b-progress 
-                        :value="gpu.usage || 0" 
+                        :value="subAgent.cpu_usage || 0" 
                         :max="100" 
-                        class="flex-grow-1"
-                        :variant="getResourceVariant(gpu.usage || 0)"
-                        height="0.5rem"
+                        class="flex-grow-1 mr-2"
+                        :variant="getResourceVariant(subAgent.cpu_usage || 0)"
+                        height="0.7rem"
                       ></b-progress>
-                      <small class="ml-2">{{ gpu.usage || 0 }}%</small>
+                      <span class="text-nowrap">{{ subAgent.cpu_usage || 0 }}%</span>
                     </div>
+                  </div>
+                  <div class="info-item">
+                    <small class="text-muted">内存使用率：</small>
+                    <div class="d-flex align-items-center">
+                      <b-progress 
+                        :value="subAgent.memory_usage || 0" 
+                        :max="100" 
+                        class="flex-grow-1 mr-2"
+                        :variant="getResourceVariant(subAgent.memory_usage || 0)"
+                        height="0.7rem"
+                      ></b-progress>
+                      <span class="text-nowrap">{{ subAgent.memory_usage || 0 }}%</span>
+                    </div>
+                  </div>
+                  <div class="info-item" v-if="subAgent.monitor_file">
+                    <small class="text-muted">监控文件：</small>
+                    <div>{{ subAgent.monitor_file }}</div>
                   </div>
                 </div>
                 
-                <!-- CPU使用情况 -->
-                <div class="d-flex align-items-center mt-1">
-                  <small class="text-nowrap mr-2">CPU使用率:</small>
-                  <b-progress 
-                    :value="subAgent.cpu_usage || 0" 
-                    :max="100" 
-                    class="flex-grow-1"
-                    :variant="getResourceVariant(subAgent.cpu_usage || 0)"
-                    height="0.5rem"
-                  ></b-progress>
-                  <small class="ml-2">{{ subAgent.cpu_usage || 0 }}%</small>
+                <!-- GPU资源展示 -->
+                <div class="resource-section mt-3" v-if="subAgent.gpu_info && subAgent.gpu_info.length > 0">
+                  <h6 class="mb-2">GPU资源</h6>
+                  <b-row class="gpu-grid">
+                    <b-col md="6" lg="4" v-for="(gpu, index) in subAgent.gpu_info" :key="index" class="mb-2">
+                      <div class="gpu-card p-2">
+                        <div class="d-flex justify-content-between">
+                          <strong>GPU {{ gpu.gpu_id }}</strong>
+                        </div>
+                        <div class="mt-2">
+                          <small class="d-block mb-1">使用率:</small>
+                          <b-progress 
+                            :value="gpu.usage || 0" 
+                            :max="100" 
+                            :variant="getResourceVariant(gpu.usage || 0)"
+                            class="mb-2"
+                            height="0.6rem"
+                          >
+                            <span>{{ gpu.usage || 0 }}%</span>
+                          </b-progress>
+                        </div>
+                        <div>
+                          <small class="d-block mb-1">显存:</small>
+                          <b-progress 
+                            :value="gpu.memory_used || 0" 
+                            :max="gpu.memory_total || 1" 
+                            variant="info"
+                            class="mb-1"
+                            height="0.6rem"
+                          ></b-progress>
+                          <div class="d-flex justify-content-between">
+                            <small>{{ formatMemory(gpu.memory_used) }}</small>
+                            <small>{{ formatMemory(gpu.memory_total) }}</small>
+                          </div>
+                        </div>
+                      </div>
+                    </b-col>
+                  </b-row>
                 </div>
               </b-card-body>
             </b-card>
@@ -278,6 +357,17 @@
           placeholder="例如: 0,1,2"
         ></b-form-input>
       </b-form-group>
+      
+      <b-form-group
+        label="监控文件路径 (可选)"
+        label-for="monitor-file"
+      >
+        <b-form-input
+          id="monitor-file"
+          v-model="newAgentMonitorFile"
+          placeholder="例如: /path/to/monitor.log"
+        ></b-form-input>
+      </b-form-group>
     </b-modal>
   </div>
 </template>
@@ -294,6 +384,7 @@ export default {
       newAgentName: '',
       newAgentCpuCores: 1,
       newAgentGpuIds: '',
+      newAgentMonitorFile: '',
       pollingEnabled: true
     }
   },
@@ -314,8 +405,7 @@ export default {
     ...mapActions('agents', [
       'fetchAgents', 
       'createMainAgent', 
-      'cancelAgent',
-      'checkAgentsStatus'
+      'cancelAgent'
     ]),
     
     // 刷新Agent列表
@@ -346,7 +436,8 @@ export default {
         await this.createMainAgent({
           name: this.newAgentName,
           cpu_cores: this.newAgentCpuCores,
-          gpu_ids: gpuIds
+          gpu_ids: gpuIds,
+          monitor_file: this.newAgentMonitorFile || null
         })
         
         this.$bvToast.toast('主Agent创建成功', {
@@ -359,6 +450,7 @@ export default {
         this.newAgentName = ''
         this.newAgentCpuCores = 1
         this.newAgentGpuIds = ''
+        this.newAgentMonitorFile = ''
         
         // 关闭弹窗
         this.$bvModal.hide('create-agent-modal')
@@ -392,25 +484,6 @@ export default {
         if (error === false) return // 用户取消操作
         
         this.$bvToast.toast('取消Agent失败', {
-          title: '错误',
-          variant: 'danger',
-          solid: true
-        })
-      }
-    },
-    
-    // 检查所有Agent状态
-    async handleCheckAgentsStatus() {
-      try {
-        await this.checkAgentsStatus()
-        
-        this.$bvToast.toast('Agent状态已更新', {
-          title: '成功',
-          variant: 'success',
-          solid: true
-        })
-      } catch (error) {
-        this.$bvToast.toast('检查Agent状态失败', {
           title: '错误',
           variant: 'danger',
           solid: true
@@ -473,6 +546,33 @@ export default {
       if (secs > 0 && days === 0 && hours === 0) result += `${secs}秒`
       
       return result.trim()
+    },
+    
+    // 格式化日期时间
+    formatTime(timestamp) {
+      if (!timestamp) return '未知'
+      return moment(timestamp).format('YYYY-MM-DD HH:mm:ss')
+    },
+    
+    // 格式化内存大小
+    formatMemory(bytes) {
+      if (!bytes) return '0 MB'
+      if (bytes < 1024) return `${bytes} MB`
+      return `${(bytes / 1024).toFixed(1)} GB`
+    },
+    
+    // 启动Agent状态轮询
+    startPolling() {
+      const poll = () => {
+        if (!this.pollingEnabled) return
+        
+        this.refreshAgents()
+          .finally(() => {
+            this.pollingTimeout = setTimeout(poll, 5000)
+          })
+      }
+      
+      this.pollingTimeout = setTimeout(poll, 5000)
     }
   },
   
@@ -481,9 +581,7 @@ export default {
     this.refreshAgents()
     
     // 启动轮询
-    this.pollingTimeout = setTimeout(() => {
-      this.refreshAgents()
-    }, 5000)
+    this.startPolling()
   },
   
   beforeDestroy() {
@@ -503,10 +601,12 @@ export default {
 
 .main-agent-card {
   border-left: 4px solid #007bff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
 }
 
 .sub-agent-card {
   border-left: 3px solid #17a2b8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 .offline {
@@ -518,5 +618,42 @@ export default {
   background-color: #f8f9fa;
   padding: 10px;
   border-radius: 4px;
+}
+
+.agent-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+
+@media (max-width: 992px) {
+  .agent-info-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .agent-info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.info-item {
+  margin-bottom: 5px;
+}
+
+.gpu-card {
+  background-color: #fff;
+  border-radius: 4px;
+  border: 1px solid #eee;
+  height: 100%;
+}
+
+.gpu-grid {
+  margin: 0 -5px;
+}
+
+.gpu-grid .col {
+  padding: 0 5px;
 }
 </style>

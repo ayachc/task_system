@@ -105,13 +105,7 @@ export const agentApi = {
   createSubAgent: (agentData) => api.post('/agents/sub', agentData),
   
   // 取消Agent
-  cancelAgent: (agentId) => api.post(`/agents/${agentId}/cancel`),
-  
-  // 发送心跳
-  sendHeartbeat: (agentId, data) => api.post(`/agents/${agentId}/heartbeat`, data),
-  
-  // 检查所有Agent状态
-  checkAgentsStatus: () => api.post('/agents/check-status')
+  cancelAgent: (agentId) => api.post(`/agents/${agentId}/cancel`)
 }
 
 // 模板相关API

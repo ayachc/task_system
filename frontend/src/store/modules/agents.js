@@ -11,13 +11,13 @@ const state = {
 // 获取状态
 const getters = {
   allAgents: state => state.agents,
-  mainAgents: state => state.agents.filter(agent => agent.agent_type === 'main'),
-  subAgents: state => state.agents.filter(agent => agent.agent_type === 'sub'),
+  mainAgents: state => state.agents.filter(agent => agent.type === 'main'),
+  subAgents: state => state.agents.filter(agent => agent.type === 'sub'),
   
   // 按主Agent ID获取子Agent
   subAgentsByMainId: state => mainAgentId => {
     return state.agents.filter(
-      agent => agent.agent_type === 'sub' && agent.main_agent_id === mainAgentId
+      agent => agent.type === 'sub' && agent.main_agent_id === mainAgentId
     )
   },
   
@@ -29,7 +29,7 @@ const getters = {
     return {
       cpuUsage: agent.cpu_usage || 0,
       memoryUsage: agent.memory_usage || 0,
-      gpuUsage: agent.gpu_usage || []
+      gpuInfo: agent.gpu_info || []
     }
   },
   
@@ -65,7 +65,7 @@ const mutations = {
       if (resourceData) {
         agent.cpu_usage = resourceData.cpu_usage || agent.cpu_usage
         agent.memory_usage = resourceData.memory_usage || agent.memory_usage
-        agent.gpu_usage = resourceData.gpu_usage || agent.gpu_usage
+        agent.gpu_info = resourceData.gpu_info || agent.gpu_info
       }
       
       state.agents.splice(agentIndex, 1, agent)
@@ -118,7 +118,7 @@ const actions = {
         resourceData: {
           cpu_usage: agent.cpu_usage,
           memory_usage: agent.memory_usage,
-          gpu_usage: agent.gpu_usage
+          gpu_info: agent.gpu_info
         }
       })
       return agent
@@ -183,18 +183,6 @@ const actions = {
       setTimeout(() => {
         dispatch('pollAgentStatus')
       }, 10000)
-    }
-  },
-  
-  // 检查所有Agent状态
-  async checkAgentsStatus({ dispatch }) {
-    try {
-      await agentApi.checkAgentsStatus()
-      // 更新Agent列表
-      dispatch('fetchAgents')
-    } catch (error) {
-      console.error('检查Agent状态失败:', error)
-      throw error
     }
   },
   

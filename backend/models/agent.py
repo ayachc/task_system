@@ -6,6 +6,7 @@ Agent数据模型
 """
 
 import uuid
+import json
 from datetime import datetime
 from backend.utils.database import get_db
 from backend.utils.logger import system_logger
@@ -16,9 +17,8 @@ class Agent:
     def __init__(self, id=None, name=None, type=None, status="online",
                  created_time=None, last_heartbeat_time=None, running_time=0,
                  cpu_cores=None, cpu_usage=0.0, memory_usage=0.0,
-                 gpu_ids=None, gpu_usage=None, gpu_memory_usage=None,
-                 task_id=None, main_agent_id=None,
-                 available_cpu_cores=None, available_gpu_ids=None):
+                 gpu_info=None, task_id=None, main_agent_id=None,
+                 available_cpu_cores=None, monitor_file=None):
         """初始化Agent实例
         
         Args:
@@ -32,13 +32,11 @@ class Agent:
             cpu_cores: CPU核心数
             cpu_usage: CPU使用率
             memory_usage: 内存使用率
-            gpu_ids: GPU ID列表
-            gpu_usage: GPU使用率字典，键为GPU ID，值为使用率
-            gpu_memory_usage: GPU显存使用率字典，键为GPU ID，值为使用率
+            gpu_info: GPU信息列表，每个元素为包含GPU信息的字典
             task_id: 关联的任务ID（子Agent才有）
             main_agent_id: 主Agent ID（子Agent才有）
             available_cpu_cores: 可用CPU核心数
-            available_gpu_ids: 可用GPU ID列表
+            monitor_file: 监控文件路径
         """
         self.id = id or str(uuid.uuid4())
         self.name = name
@@ -50,17 +48,15 @@ class Agent:
         self.cpu_cores = cpu_cores
         self.cpu_usage = cpu_usage
         self.memory_usage = memory_usage
-        self.gpu_ids = gpu_ids or []
-        self.gpu_usage = gpu_usage or {}
-        self.gpu_memory_usage = gpu_memory_usage or {}
+        self.gpu_info = gpu_info or []
         self.task_id = task_id
         self.main_agent_id = main_agent_id
         self.available_cpu_cores = available_cpu_cores
-        self.available_gpu_ids = available_gpu_ids or []
+        self.monitor_file = monitor_file
     
     @classmethod
-    def create_agent(cls, name, type, cpu_cores=None, gpu_ids=None,
-                    task_id=None, main_agent_id=None):
+    def create_agent(cls, name, type, cpu_cores=1, gpu_ids=None,
+                    task_id=None, main_agent_id=None, monitor_file=None):
         """创建新Agent
         
         Args:
@@ -70,6 +66,7 @@ class Agent:
             gpu_ids: GPU ID列表
             task_id: 关联任务ID
             main_agent_id: 主Agent ID
+            monitor_file: 监控文件路径
             
         Returns:
             agent: 新创建的Agent实例
@@ -90,38 +87,45 @@ class Agent:
         
         # 设置可用资源
         available_cpu_cores = cpu_cores
-        available_gpu_ids = gpu_ids.copy() if gpu_ids else []
+        
+        # 初始化GPU信息
+        gpu_info = []
+        if gpu_ids:
+            for gpu_id in gpu_ids:
+                gpu_info.append({
+                    'gpu_id': gpu_id,
+                    'usage': 0.0,
+                    'memory_used': 0,
+                    'memory_total': 0,
+                    'is_available': True
+                })
+        
+        # 将GPU信息转换为JSON字符串
+        gpu_info_json = json.dumps(gpu_info)
         
         # 插入Agent记录
         query = """
             INSERT INTO agents (
                 id, name, type, status, created_time, last_heartbeat_time,
-                running_time, cpu_cores, cpu_usage, memory_usage,
-                task_id, main_agent_id, available_cpu_cores
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                running_time, cpu_cores, cpu_usage, memory_usage, gpu_info,
+                task_id, main_agent_id, available_cpu_cores, monitor_file
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             agent_id, name, type, status, created_time, last_heartbeat_time,
-            0, cpu_cores, cpu_usage, memory_usage,
-            task_id, main_agent_id, available_cpu_cores
+            0, cpu_cores, cpu_usage, memory_usage, gpu_info_json,
+            task_id, main_agent_id, available_cpu_cores, monitor_file
         )
-        db.execute(query, params)
         
-        # 如果有GPU，插入GPU记录
-        if gpu_ids:
-            for gpu_id in gpu_ids:
-                gpu_query = """
-                    INSERT INTO agent_gpus (
-                        agent_id, gpu_id, gpu_usage, gpu_memory_usage, is_available
-                    ) VALUES (?, ?, ?, ?, ?)
-                """
-                gpu_params = (agent_id, gpu_id, 0.0, 0.0, 1)
-                db.execute(gpu_query, gpu_params)
-        
-        system_logger.info(f"创建Agent: ID={agent_id}, 名称={name}, 类型={type}")
-        
-        # 返回创建的Agent实例
-        return cls.get_agent_by_id(agent_id)
+        try:
+            db.execute(query, params)
+            system_logger.info(f"Agent创建成功: ID={agent_id}, 名称={name}, 类型={type}")
+            
+            # 返回新创建的Agent实例
+            return cls.get_agent_by_id(agent_id)
+        except Exception as e:
+            system_logger.error(f"Agent创建失败: {str(e)}")
+            return None
     
     @classmethod
     def get_agent_by_id(cls, agent_id):
@@ -133,50 +137,43 @@ class Agent:
         Returns:
             agent: Agent实例，如果不存在则返回None
         """
-        db = get_db()
-        query = "SELECT * FROM agents WHERE id = ?"
-        agent_data = db.fetch_one(query, (agent_id,))
-        
-        if not agent_data:
+        if not agent_id:
             return None
         
-        # 获取GPU信息
-        gpu_query = "SELECT gpu_id, gpu_usage, gpu_memory_usage, is_available FROM agent_gpus WHERE agent_id = ?"
-        gpu_data = db.fetch_all(gpu_query, (agent_id,))
+        db = get_db()
         
-        gpu_ids = []
-        gpu_usage = {}
-        gpu_memory_usage = {}
-        available_gpu_ids = []
+        # 查询Agent基本信息
+        query = "SELECT * FROM agents WHERE id = ?"
+        row = db.fetch_one(query, (agent_id,))
         
-        if gpu_data:
-            for gpu in gpu_data:
-                gpu_id = gpu['gpu_id']
-                gpu_ids.append(gpu_id)
-                gpu_usage[gpu_id] = gpu['gpu_usage']
-                gpu_memory_usage[gpu_id] = gpu['gpu_memory_usage']
-                if gpu['is_available']:
-                    available_gpu_ids.append(gpu_id)
+        if not row:
+            return None
         
-        # 构建Agent实例
+        # 解析JSON格式的GPU信息
+        gpu_info = []
+        if row['gpu_info']:
+            try:
+                gpu_info = json.loads(row['gpu_info'])
+            except Exception as e:
+                system_logger.error(f"解析GPU信息失败: {str(e)}")
+        
+        # 创建Agent实例
         agent = cls(
-            id=agent_data['id'],
-            name=agent_data['name'],
-            type=agent_data['type'],
-            status=agent_data['status'],
-            created_time=agent_data['created_time'],
-            last_heartbeat_time=agent_data['last_heartbeat_time'],
-            running_time=agent_data['running_time'],
-            cpu_cores=agent_data['cpu_cores'],
-            cpu_usage=agent_data['cpu_usage'],
-            memory_usage=agent_data['memory_usage'],
-            gpu_ids=gpu_ids,
-            gpu_usage=gpu_usage,
-            gpu_memory_usage=gpu_memory_usage,
-            task_id=agent_data['task_id'],
-            main_agent_id=agent_data['main_agent_id'],
-            available_cpu_cores=agent_data['available_cpu_cores'],
-            available_gpu_ids=available_gpu_ids
+            id=row['id'],
+            name=row['name'],
+            type=row['type'],
+            status=row['status'],
+            created_time=row['created_time'],
+            last_heartbeat_time=row['last_heartbeat_time'],
+            running_time=row['running_time'],
+            cpu_cores=row['cpu_cores'],
+            cpu_usage=row['cpu_usage'],
+            memory_usage=row['memory_usage'],
+            gpu_info=gpu_info,
+            task_id=row['task_id'],
+            main_agent_id=row['main_agent_id'],
+            available_cpu_cores=row['available_cpu_cores'],
+            monitor_file=row['monitor_file']
         )
         
         return agent
@@ -189,14 +186,38 @@ class Agent:
             list: 所有Agent实例列表
         """
         db = get_db()
-        query = "SELECT id FROM agents ORDER BY created_time DESC"
-        agent_ids = db.fetch_all(query)
+        
+        query = "SELECT * FROM agents"
+        rows = db.fetch_all(query)
         
         agents = []
-        for data in agent_ids:
-            agent = cls.get_agent_by_id(data['id'])
-            if agent:
-                agents.append(agent)
+        for row in rows:
+            # 解析JSON格式的GPU信息
+            gpu_info = []
+            if row['gpu_info']:
+                try:
+                    gpu_info = json.loads(row['gpu_info'])
+                except Exception as e:
+                    system_logger.error(f"解析GPU信息失败: {str(e)}")
+            
+            agent = cls(
+                id=row['id'],
+                name=row['name'],
+                type=row['type'],
+                status=row['status'],
+                created_time=row['created_time'],
+                last_heartbeat_time=row['last_heartbeat_time'],
+                running_time=row['running_time'],
+                cpu_cores=row['cpu_cores'],
+                cpu_usage=row['cpu_usage'],
+                memory_usage=row['memory_usage'],
+                gpu_info=gpu_info,
+                task_id=row['task_id'],
+                main_agent_id=row['main_agent_id'],
+                available_cpu_cores=row['available_cpu_cores'],
+                monitor_file=row['monitor_file']
+            )
+            agents.append(agent)
         
         return agents
     
@@ -207,6 +228,11 @@ class Agent:
             bool: 更新是否成功
         """
         db = get_db()
+        
+        # 将GPU信息转换为JSON字符串
+        gpu_info_json = json.dumps(self.gpu_info)
+        
+        # 更新Agent基本信息
         query = """
             UPDATE agents SET
                 name = ?,
@@ -217,9 +243,11 @@ class Agent:
                 cpu_cores = ?,
                 cpu_usage = ?,
                 memory_usage = ?,
+                gpu_info = ?,
                 task_id = ?,
                 main_agent_id = ?,
-                available_cpu_cores = ?
+                available_cpu_cores = ?,
+                monitor_file = ?
             WHERE id = ?
         """
         params = (
@@ -231,33 +259,16 @@ class Agent:
             self.cpu_cores,
             self.cpu_usage,
             self.memory_usage,
+            gpu_info_json,
             self.task_id,
             self.main_agent_id,
             self.available_cpu_cores,
+            self.monitor_file,
             self.id
         )
         
         try:
             db.execute(query, params)
-            
-            # 更新GPU信息
-            # 先删除所有旧记录
-            db.execute("DELETE FROM agent_gpus WHERE agent_id = ?", (self.id,))
-            
-            # 插入新记录
-            for gpu_id in self.gpu_ids:
-                gpu_usage_value = self.gpu_usage.get(gpu_id, 0.0)
-                gpu_memory_usage_value = self.gpu_memory_usage.get(gpu_id, 0.0)
-                is_available = 1 if gpu_id in self.available_gpu_ids else 0
-                
-                gpu_query = """
-                    INSERT INTO agent_gpus (
-                        agent_id, gpu_id, gpu_usage, gpu_memory_usage, is_available
-                    ) VALUES (?, ?, ?, ?, ?)
-                """
-                gpu_params = (self.id, gpu_id, gpu_usage_value, gpu_memory_usage_value, is_available)
-                db.execute(gpu_query, gpu_params)
-            
             system_logger.info(f"更新Agent: ID={self.id}, 状态={self.status}")
             return True
         except Exception as e:
@@ -304,8 +315,9 @@ class Agent:
         
         # 检查GPU资源
         if gpu_count and gpu_count > 0:
-            # 检查可用GPU数量
-            if len(self.available_gpu_ids) < gpu_count:
+            # 计算可用GPU数量
+            available_gpus = [gpu for gpu in self.gpu_info if gpu.get('is_available', False)]
+            if len(available_gpus) < gpu_count:
                 return False
             
             # 如果指定了显存需求，检查每个可用GPU的显存
@@ -333,11 +345,9 @@ class Agent:
             'cpu_cores': self.cpu_cores,
             'cpu_usage': self.cpu_usage,
             'memory_usage': self.memory_usage,
-            'gpu_ids': self.gpu_ids,
-            'gpu_usage': self.gpu_usage,
-            'gpu_memory_usage': self.gpu_memory_usage,
+            'gpu_info': self.gpu_info,
             'task_id': self.task_id,
             'main_agent_id': self.main_agent_id,
             'available_cpu_cores': self.available_cpu_cores,
-            'available_gpu_ids': self.available_gpu_ids
+            'monitor_file': self.monitor_file
         }

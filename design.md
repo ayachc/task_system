@@ -134,13 +134,11 @@ class Agent:
     cpu_cores: int
     cpu_usage: float
     memory_usage: float
-    gpu_ids: list[str]
-    gpu_usage: dict[str, float]
-    gpu_memory_usage: dict[str, float]
+    gpu_info: list[dict[str, float]]
     task_id: str
     main_agent_id: str
     available_cpu_cores: int
-    available_gpu_ids: list[str]
+    monitor_file: str
 ```
 
 **agent.py函数**
@@ -220,7 +218,8 @@ class ResourceUtil():
 2. 主agent一般由用户手动创建，不执行任务，每2秒向server发送一次心跳，传递主agent资源使用情况并从server的回复中获取任务，然后根据任务的资源需求来更新资源并创建子agent执行该任务。
 3. 子agent每1秒向server发送一次心跳，发送子agent资源使用情况以及任务新产生的stdout、stderr。
 
-
+我们继续修改agent服务，现在我们来修改前端部分：
+请逐步分析现在agent服务的前端部分，当前有一个agent列表显示页面，agent列表我希望是不分页的，然后每个主agent和他的子agent在一块（子agent能显示在主agent下面，每两个主agent间有间隔）。每个agent都会显示id、名字、类型、状态、创建时间、上次心跳时间、正在使用的cpu核心数，总核心数，cpu使用率（百分比），内存使用率，gpu信息。子aget额外显示一个正在运行的任务id。每个agent的信息显示，如果一行只显示一个，右边会很空。请自行判断一行显示多少种信息，其中每个gpu都显示，显存用类似进度条可视化。请你逐步分析，需要修改或者重构哪些文件，并做出修改。
 
 ### 脚本模板
 请简洁的实现

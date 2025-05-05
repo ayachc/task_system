@@ -160,34 +160,6 @@ class AgentService:
         
         return agents
     
-    def get_main_agents(self, filter_status=None):
-        """获取所有主Agent
-        
-        Args:
-            filter_status: 可选的Agent状态过滤
-            
-        Returns:
-            list: 主Agent列表
-        """
-        return self.get_all_agents(filter_type='main', filter_status=filter_status)
-    
-    def get_sub_agents(self, main_agent_id=None, filter_status=None):
-        """获取子Agent
-        
-        Args:
-            main_agent_id: 可选的主Agent ID过滤
-            filter_status: 可选的Agent状态过滤
-            
-        Returns:
-            list: 子Agent列表
-        """
-        agents = self.get_all_agents(filter_type='sub', filter_status=filter_status)
-        
-        if main_agent_id:
-            agents = [agent for agent in agents if agent.main_agent_id == main_agent_id]
-        
-        return agents
-    
     def update_agent(self, agent):
         """更新Agent
         
@@ -284,9 +256,12 @@ class AgentService:
                     main_agent.available_cpu_cores += agent.cpu_cores
                 
                 # 返还GPU资源
-                for gpu_id in agent.gpu_ids:
-                    if gpu_id not in main_agent.available_gpu_ids:
-                        main_agent.available_gpu_ids.append(gpu_id)
+                for gpu in agent.gpu_info:
+                    gpu_id = gpu.get('gpu_id')
+                    for main_gpu in main_agent.gpu_info:
+                        if main_gpu.get('gpu_id') == gpu_id:
+                            main_gpu['is_available'] = True
+                            break
                 
                 main_agent.update_agent()
         
@@ -340,8 +315,15 @@ class AgentService:
                 {
                     'cpu_usage': CPU使用率,
                     'memory_usage': 内存使用率,
-                    'gpu_usage': GPU使用率字典,
-                    'gpu_memory_usage': GPU显存使用率字典,
+                    'gpu_info': GPU信息列表 [
+                        {
+                            'gpu_id': GPU ID,
+                            'usage': GPU使用率,
+                            'memory_used': 已用显存(MB),
+                            'memory_total': 总显存(MB),
+                            'is_available': 是否可用
+                        }
+                    ],
                     'running_time': 运行时长（秒）
                 }
             task_info: 可选的任务执行信息
@@ -374,11 +356,18 @@ class AgentService:
             if 'memory_usage' in resource_info:
                 agent.memory_usage = resource_info['memory_usage']
             
-            if 'gpu_usage' in resource_info:
-                agent.gpu_usage.update(resource_info['gpu_usage'])
-            
-            if 'gpu_memory_usage' in resource_info:
-                agent.gpu_memory_usage.update(resource_info['gpu_memory_usage'])
+            if 'gpu_info' in resource_info:
+                # 更新GPU信息
+                updated_gpu_info = resource_info['gpu_info']
+                if isinstance(updated_gpu_info, list):
+                    # 如果是完整的GPU信息列表，直接替换
+                    agent.gpu_info = updated_gpu_info
+                elif isinstance(updated_gpu_info, dict):
+                    # 如果是部分更新（按GPU ID索引），合并更新
+                    for gpu in agent.gpu_info:
+                        gpu_id = gpu.get('gpu_id')
+                        if gpu_id in updated_gpu_info:
+                            gpu.update(updated_gpu_info[gpu_id])
             
             if 'running_time' in resource_info:
                 agent.running_time = resource_info['running_time']
@@ -403,10 +392,13 @@ class AgentService:
                             if agent.cpu_cores and main_agent.available_cpu_cores is not None:
                                 main_agent.available_cpu_cores += agent.cpu_cores
                             
-                            # 返还GPU资源
-                            for gpu_id in agent.gpu_ids:
-                                if gpu_id not in main_agent.available_gpu_ids:
-                                    main_agent.available_gpu_ids.append(gpu_id)
+                            # 返还GPU资源 - 将子Agent的GPU标记为可用
+                            for gpu in agent.gpu_info:
+                                gpu_id = gpu.get('gpu_id')
+                                for main_gpu in main_agent.gpu_info:
+                                    if main_gpu.get('gpu_id') == gpu_id:
+                                        main_gpu['is_available'] = True
+                                        break
                             
                             main_agent.update_agent()
                     
