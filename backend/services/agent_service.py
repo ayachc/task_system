@@ -5,6 +5,7 @@
 Agent管理服务
 """
 
+import json
 from datetime import datetime, timedelta
 from backend.models.agent import Agent
 from backend.utils.database import get_db
@@ -32,10 +33,6 @@ class AgentService:
         Returns:
             agent: 新创建的主Agent
         """
-        # 参数校验
-        if not name:
-            system_logger.error("创建主Agent失败: 缺少必要参数")
-            return None
         
         # 创建主Agent
         agent = Agent.create_agent(
@@ -67,34 +64,12 @@ class AgentService:
         Returns:
             agent: 新创建的子Agent
         """
-        # 参数校验
-        if not name or not main_agent_id or not task_id:
-            system_logger.error("创建子Agent失败: 缺少必要参数")
-            return None
         
         # 检查主Agent是否存在
         main_agent = Agent.get_agent_by_id(main_agent_id)
         if not main_agent or main_agent.type != 'main' or main_agent.status != 'online':
             system_logger.error(f"创建子Agent失败: 主Agent不存在或不可用: ID={main_agent_id}")
             return None
-        
-        # 检查任务是否存在
-        task = self.task_service.get_task_by_id(task_id)
-        if not task or task.status not in ['waiting', 'blocked']:
-            system_logger.error(f"创建子Agent失败: 任务不存在或状态不正确: ID={task_id}")
-            return None
-        
-        # 检查资源是否从主Agent分配
-        if cpu_cores and (main_agent.available_cpu_cores is None or 
-                         main_agent.available_cpu_cores < cpu_cores):
-            system_logger.error(f"创建子Agent失败: 主Agent没有足够的CPU资源: 需要={cpu_cores}, 可用={main_agent.available_cpu_cores}")
-            return None
-        
-        if gpu_ids:
-            for gpu_id in gpu_ids:
-                if gpu_id not in main_agent.available_gpu_ids:
-                    system_logger.error(f"创建子Agent失败: GPU不可用: ID={gpu_id}")
-                    return None
         
         # 创建子Agent
         agent = Agent.create_agent(
@@ -108,20 +83,6 @@ class AgentService:
         
         if not agent:
             return None
-        
-        # 更新主Agent的可用资源
-        if cpu_cores and main_agent.available_cpu_cores is not None:
-            main_agent.available_cpu_cores -= cpu_cores
-        
-        if gpu_ids:
-            for gpu_id in gpu_ids:
-                if gpu_id in main_agent.available_gpu_ids:
-                    main_agent.available_gpu_ids.remove(gpu_id)
-        
-        main_agent.update_agent()
-        
-        # 更新任务状态为运行中
-        self.task_service.update_task_by_key(task_id, status='running', agent_id=agent.id)
         
         # 记录日志
         logger = get_agent_logger(agent.id)
@@ -161,61 +122,6 @@ class AgentService:
             agents = [agent for agent in agents if agent.status == filter_status]
         
         return agents
-    
-    def update_agent(self, agent):
-        """更新Agent
-        
-        Args:
-            agent: Agent实例
-            
-        Returns:
-            bool: 更新是否成功
-        """
-        if not agent or not agent.id:
-            system_logger.error("更新Agent失败: 无效的Agent实例")
-            return False
-        
-        # 获取原Agent信息进行比较
-        original_agent = Agent.get_agent_by_id(agent.id)
-        if not original_agent:
-            system_logger.error(f"更新Agent失败: Agent不存在: ID={agent.id}")
-            return False
-        
-        # 状态变更记录
-        if original_agent.status != agent.status:
-            logger = get_agent_logger(agent.id)
-            logger.info(f"Agent状态变更: {original_agent.status} -> {agent.status}")
-            
-            # 如果Agent离线且正在执行任务，处理任务状态
-            if agent.status == 'offline' and agent.task_id and agent.type == 'sub':
-                task = self.task_service.get_task_by_id(agent.task_id)
-                if task and task.status == 'running':
-                    # 将任务标记为失败
-                    self.task_service.update_task_by_key(
-                        task.id, 
-                        status='failed',
-                        end_time=datetime.now()
-                    )
-                    logger.warning(f"Agent离线，任务标记为失败: 任务ID={agent.task_id}")
-        
-        # 如果是子Agent完成任务
-        if agent.type == 'sub' and agent.task_id and not original_agent.task_id:
-            # 将资源返还给主Agent
-            if agent.main_agent_id:
-                main_agent = Agent.get_agent_by_id(agent.main_agent_id)
-                if main_agent:
-                    # 返还CPU资源
-                    if agent.cpu_cores and main_agent.available_cpu_cores is not None:
-                        main_agent.available_cpu_cores += agent.cpu_cores
-                    
-                    # 返还GPU资源
-                    for gpu_id in agent.gpu_ids:
-                        if gpu_id not in main_agent.available_gpu_ids:
-                            main_agent.available_gpu_ids.append(gpu_id)
-                    
-                    main_agent.update_agent()
-        
-        return agent.update_agent()
     
     def cancel_agent(self, agent_id):
         """取消Agent
@@ -269,71 +175,28 @@ class AgentService:
         
         return agent.cancel_agent()
     
-    def check_agents_status(self):
-        """检查所有Agent状态，标记超时心跳的Agent为离线
-        
-        Returns:
-            int: 标记为离线的Agent数量
-        """
-        # 计算心跳超时时间
-        timeout = datetime.now() - timedelta(seconds=Config.HEARTBEAT_TIMEOUT)
-        
-        # 查询所有在线但心跳超时的Agent
-        query = """
-            SELECT id FROM agents 
-            WHERE status = 'online' 
-            AND last_heartbeat_time < ?
-        """
-        timeout_agents = self.db.fetch_all(query, (timeout,))
-        
-        count = 0
-        for agent_data in timeout_agents:
-            agent = Agent.get_agent_by_id(agent_data['id'])
-            if agent:
-                agent.status = 'offline'
-                if agent.update_agent():
-                    count += 1
-                    system_logger.warning(f"Agent心跳超时，标记为离线: ID={agent.id}, 最后心跳时间={agent.last_heartbeat_time}")
-                    
-                    # 如果是子Agent且有关联任务，将任务标记为失败
-                    if agent.type == 'sub' and agent.task_id:
-                        task = self.task_service.get_task_by_id(agent.task_id)
-                        if task and task.status == 'running':
-                            self.task_service.update_task_by_key(
-                                task.id, 
-                                status='failed',
-                                end_time=datetime.now()
-                            )
-                            system_logger.warning(f"Agent离线，任务标记为失败: 任务ID={agent.task_id}")
-        
-        return count
-    
-    def handle_heartbeat(self, agent_id, resource_info, task_info=None):
+    def handle_heartbeat(self, agent_id, data):
         """处理Agent心跳
         
         Args:
             agent_id: Agent ID
-            resource_info: 资源使用信息
+            data: agent传来的信息
                 {
-                    'cpu_usage': CPU使用率,
-                    'memory_usage': 内存使用率,
-                    'gpu_info': GPU信息列表 [
-                        {
-                            'gpu_id': GPU ID,
-                            'usage': GPU使用率,
-                            'memory_used': 已用显存(MB),
-                            'memory_total': 总显存(MB),
-                            'is_available': 是否可用
-                        }
-                    ],
-                    'running_time': 运行时长（秒）
+                    'resource_info': {
+                        'cpu_cores': CPU核心数,
+                        'cpu_usage': CPU使用率(百分比，可能超过100%),
+                        'memory_total': 系统总内存(字节),
+                        'memory_total_usage': 系统总内存使用量(字节),
+                        'memory_used': 内存使用量(字节),
+                        'gpu_info': GPU信息列表,
+                        'gpu_ids': 可用GPU ID列表
+                    }
+                    'task_info': { # 仅子agent提供
+                        'status': 任务状态, 
+                        'log': 新日志内容
+                    }
                 }
-            task_info: 可选的任务执行信息
-                {
-                    'status': 任务状态,
-                    'log': 新增日志内容
-                }
-            
+                
         Returns:
             dict: 包含Agent应执行的操作
                 {
@@ -342,9 +205,13 @@ class AgentService:
                 }
         """
         agent = Agent.get_agent_by_id(agent_id)
-        if not agent:
+        if not agent or agent.status == "end":
             system_logger.error(f"处理心跳失败: Agent不存在: ID={agent_id}")
             return {'action': 'stop'}
+        
+        # 从data中提取信息
+        resource_info = data.get('resource_info', {})
+        task_info = data.get('task_info', {})
         
         # 更新Agent信息
         agent.last_heartbeat_time = datetime.now()
@@ -356,26 +223,29 @@ class AgentService:
                 agent.cpu_usage = resource_info['cpu_usage']
             
             if 'memory_usage' in resource_info:
-                agent.memory_usage = resource_info['memory_usage']
+                agent.memory_used = resource_info['memory_usage']
+                
+            if 'memory_total' in resource_info:
+                agent.memory_total = resource_info['memory_total']
             
             if 'gpu_info' in resource_info:
                 # 更新GPU信息
-                updated_gpu_info = resource_info['gpu_info']
-                if isinstance(updated_gpu_info, list):
-                    # 如果是完整的GPU信息列表，直接替换
-                    agent.gpu_info = updated_gpu_info
-                elif isinstance(updated_gpu_info, dict):
-                    # 如果是部分更新（按GPU ID索引），合并更新
-                    for gpu in agent.gpu_info:
-                        gpu_id = gpu.get('gpu_id')
-                        if gpu_id in updated_gpu_info:
-                            gpu.update(updated_gpu_info[gpu_id])
+                agent.gpu_info = json.dumps(resource_info['gpu_info'])
             
-            if 'running_time' in resource_info:
-                agent.running_time = resource_info['running_time']
+            # 确保 created_time 是 datetime 对象
+            if isinstance(agent.created_time, str):
+                try:
+                    agent.created_time = datetime.fromisoformat(agent.created_time.replace('Z', '+00:00'))
+                except ValueError:
+                    # 如果无法解析，使用当前时间
+                    agent.created_time = datetime.now()
+                    
+            agent.running_time = (datetime.now() - agent.created_time).total_seconds()
+            agent.last_heartbeat_time = datetime.now()
+
         
-        # 处理任务信息
-        if task_info and agent.task_id:
+        # 处理任务信息，主要针对子Agent
+        if task_info and agent.task_id and agent.type == 'sub':
             task = self.task_service.get_task_by_id(agent.task_id)
             if task:
                 # 处理任务状态更新
@@ -385,27 +255,8 @@ class AgentService:
                         status=task_info['status'],
                         end_time=datetime.now()
                     )
-                    
-                    # 子Agent完成任务后，将资源返还给主Agent
-                    if agent.type == 'sub' and agent.main_agent_id:
-                        main_agent = Agent.get_agent_by_id(agent.main_agent_id)
-                        if main_agent:
-                            # 返还CPU资源
-                            if agent.cpu_cores and main_agent.available_cpu_cores is not None:
-                                main_agent.available_cpu_cores += agent.cpu_cores
-                            
-                            # 返还GPU资源 - 将子Agent的GPU标记为可用
-                            for gpu in agent.gpu_info:
-                                gpu_id = gpu.get('gpu_id')
-                                for main_gpu in main_agent.gpu_info:
-                                    if main_gpu.get('gpu_id') == gpu_id:
-                                        main_gpu['is_available'] = True
-                                        break
-                            
-                            main_agent.update_agent()
-                    
-                    # 清除Agent的任务ID
-                    agent.task_id = None
+                    # 子agent生命终结
+                    agent.status = "end"
                 
                 # 追加任务日志
                 if 'log' in task_info and task_info['log']:
@@ -415,41 +266,30 @@ class AgentService:
         agent.update_agent()
         
         # 如果是主Agent，检查是否有新任务
-        if agent.type == 'main' and not agent.task_id:
-            # 检查是否有阻塞的任务可以解除
-            self._check_blocked_tasks()
-            
+        if agent.type == 'main':
             # 查找适合该Agent的任务
-            task = self.task_service.find_task_for_agent(agent)
+            
+            task, gpu_dis = self.task_service.find_task_for_agent(agent)
             if task:
-                return {
-                    'action': 'new_task',
-                    'task': task.to_dict()
-                }
+                # 立即将任务状态更新为running，防止被其他Agent获取
+                success = self.task_service.update_task_by_key(
+                    task.id,
+                    status='running',
+                    agent_id=agent_id,
+                    start_time=datetime.now()
+                )
+                
+                if success:
+                    system_logger.info(f"为主Agent分配任务: Agent ID={agent_id}, Task ID={task.id}")
+                    task = task.to_dict()
+                    task.update({'gpu_ids': gpu_dis})
+                    return {
+                        'action': 'new_task',
+                        'task': task,
+                    }
+                    
+                    
+
         
         # 默认继续当前操作
         return {'action': 'continue'}
-    
-    def _check_blocked_tasks(self):
-        """检查被阻塞的任务，如果依赖已完成则更新状态"""
-        # 获取所有被阻塞的任务
-        query = "SELECT id FROM tasks WHERE status = 'blocked'"
-        blocked_tasks = self.db.fetch_all(query)
-        
-        for task_data in blocked_tasks:
-            task = self.task_service.get_task_by_id(task_data['id'])
-            if not task or not task.depends_on:
-                continue
-            
-            # 检查所有依赖任务是否已完成
-            all_deps_completed = True
-            for dep_id in task.depends_on:
-                dep_task = self.task_service.get_task_by_id(dep_id)
-                if not dep_task or dep_task.status != 'completed':
-                    all_deps_completed = False
-                    break
-            
-            # 如果所有依赖已完成，更新任务状态为等待
-            if all_deps_completed:
-                self.task_service.update_task_by_key(task.id, status='waiting')
-                system_logger.info(f"任务依赖已满足，状态从blocked更新为waiting: ID={task.id}")

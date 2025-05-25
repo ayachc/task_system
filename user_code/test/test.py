@@ -25,5 +25,5 @@ def stress_test(max_workers):
 if __name__ == '__main__':
     print(os.getpid())
     # 测试不同进程数
-    for workers in [4, 8, 16, 32, 64]:
+    for workers in [4]:
         stress_test(workers)

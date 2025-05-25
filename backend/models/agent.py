@@ -16,7 +16,7 @@ class Agent:
     
     def __init__(self, id=None, name=None, type=None, status="online",
                  created_time=None, last_heartbeat_time=None, running_time=0,
-                 cpu_cores=None, cpu_usage=0.0, memory_usage=0.0,
+                 cpu_cores=None, cpu_usage=0.0, memory_used=0, memory_total=0,
                  gpu_info=None, task_id=None, main_agent_id=None,
                  available_cpu_cores=None, monitor_file=None):
         """初始化Agent实例
@@ -25,13 +25,14 @@ class Agent:
             id: Agent ID，唯一标识符
             name: Agent名称
             type: Agent类型，'main'或'sub'
-            status: 状态，'online'或'offline'
+            status: 状态，'online'或'offline'或'end'
             created_time: 创建时间
             last_heartbeat_time: 最后心跳时间
             running_time: 运行时长（秒）
             cpu_cores: CPU核心数
-            cpu_usage: CPU使用率
-            memory_usage: 内存使用率
+            cpu_usage: CPU使用率（百分比，可能超过100%）
+            memory_used: 内存使用量（字节）
+            memory_total: 内存总量（字节）
             gpu_info: GPU信息列表，每个元素为包含GPU信息的字典
             task_id: 关联的任务ID（子Agent才有）
             main_agent_id: 主Agent ID（子Agent才有）
@@ -47,7 +48,8 @@ class Agent:
         self.running_time = running_time
         self.cpu_cores = cpu_cores
         self.cpu_usage = cpu_usage
-        self.memory_usage = memory_usage
+        self.memory_used = memory_used
+        self.memory_total = memory_total
         self.gpu_info = gpu_info or []
         self.task_id = task_id
         self.main_agent_id = main_agent_id
@@ -55,7 +57,7 @@ class Agent:
         self.monitor_file = monitor_file
     
     @classmethod
-    def create_agent(cls, name, type, cpu_cores=1, gpu_ids=None,
+    def create_agent(cls, name, type, cpu_cores=0, gpu_ids=None,
                     task_id=None, main_agent_id=None, monitor_file=None):
         """创建新Agent
         
@@ -83,7 +85,8 @@ class Agent:
         
         # 初始化资源使用情况
         cpu_usage = 0.0
-        memory_usage = 0.0
+        memory_used = 0
+        memory_total = 1
         
         # 设置可用资源
         available_cpu_cores = cpu_cores
@@ -96,7 +99,7 @@ class Agent:
                     'gpu_id': gpu_id,
                     'usage': 0.0,
                     'memory_used': 0,
-                    'memory_total': 0,
+                    'memory_total': 1,
                     'is_available': True
                 })
         
@@ -107,13 +110,13 @@ class Agent:
         query = """
             INSERT INTO agents (
                 id, name, type, status, created_time, last_heartbeat_time,
-                running_time, cpu_cores, cpu_usage, memory_usage, gpu_info,
+                running_time, cpu_cores, cpu_usage, memory_used, memory_total, gpu_info,
                 task_id, main_agent_id, available_cpu_cores, monitor_file
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             agent_id, name, type, status, created_time, last_heartbeat_time,
-            0, cpu_cores, cpu_usage, memory_usage, gpu_info_json,
+            0, cpu_cores, cpu_usage, memory_used, memory_total, gpu_info_json,
             task_id, main_agent_id, available_cpu_cores, monitor_file
         )
         
@@ -168,7 +171,8 @@ class Agent:
             running_time=row['running_time'],
             cpu_cores=row['cpu_cores'],
             cpu_usage=row['cpu_usage'],
-            memory_usage=row['memory_usage'],
+            memory_used=row['memory_used'],
+            memory_total=row['memory_total'],
             gpu_info=gpu_info,
             task_id=row['task_id'],
             main_agent_id=row['main_agent_id'],
@@ -210,7 +214,8 @@ class Agent:
                 running_time=row['running_time'],
                 cpu_cores=row['cpu_cores'],
                 cpu_usage=row['cpu_usage'],
-                memory_usage=row['memory_usage'],
+                memory_used=row['memory_used'],
+                memory_total=row['memory_total'],
                 gpu_info=gpu_info,
                 task_id=row['task_id'],
                 main_agent_id=row['main_agent_id'],
@@ -232,7 +237,7 @@ class Agent:
         # 将GPU信息转换为JSON字符串
         gpu_info_json = json.dumps(self.gpu_info)
         
-        # 更新Agent基本信息
+        # 更新Agent记录
         query = """
             UPDATE agents SET
                 name = ?,
@@ -242,7 +247,8 @@ class Agent:
                 running_time = ?,
                 cpu_cores = ?,
                 cpu_usage = ?,
-                memory_usage = ?,
+                memory_used = ?,
+                memory_total = ?,
                 gpu_info = ?,
                 task_id = ?,
                 main_agent_id = ?,
@@ -258,7 +264,8 @@ class Agent:
             self.running_time,
             self.cpu_cores,
             self.cpu_usage,
-            self.memory_usage,
+            self.memory_used,
+            self.memory_total,
             gpu_info_json,
             self.task_id,
             self.main_agent_id,
@@ -329,11 +336,8 @@ class Agent:
         return True
     
     def to_dict(self):
-        """将Agent转换为字典
-        
-        Returns:
-            dict: Agent字典表示
-        """
+        """将Agent实例转换为字典，便于JSON序列化"""
+            
         return {
             'id': self.id,
             'name': self.name,
@@ -344,7 +348,8 @@ class Agent:
             'running_time': self.running_time,
             'cpu_cores': self.cpu_cores,
             'cpu_usage': self.cpu_usage,
-            'memory_usage': self.memory_usage,
+            'memory_used': self.memory_used,
+            'memory_total': self.memory_total,
             'gpu_info': self.gpu_info,
             'task_id': self.task_id,
             'main_agent_id': self.main_agent_id,

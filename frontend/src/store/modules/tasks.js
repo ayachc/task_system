@@ -161,7 +161,7 @@ const actions = {
       
       const response = await taskApi.getTaskLog(taskId, params)
       
-      commit('SET_TASK_LOG', response.log || '')
+      commit('SET_TASK_LOG', response.content || '')
       return response
     } catch (error) {
       console.error(`获取任务${taskId}日志失败:`, error)

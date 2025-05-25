@@ -11,7 +11,6 @@ import os
 import sys
 import time
 import json
-import uuid
 import logging
 import requests
 import subprocess
@@ -19,25 +18,28 @@ import threading
 import socket
 from datetime import datetime
 
-# 导入资源监控工具
-from agent.resource_util import get_resource_util
-
 # 获取项目根目录
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# 添加项目根目录到sys.path
+# 添加项目根目录到 Python 路径
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
+
+# 导入资源监控工具
+from agent.resource_util import get_resource_util
 
 # 导入配置
 from config import Config
 
 # 配置日志
+# 确保日志目录存在
+log_dir = os.path.join(ROOT_DIR, 'data', 'logs', 'system')
+os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(ROOT_DIR, 'data', 'logs', 'system', 'main_agent.log')),
+        logging.FileHandler(os.path.join(log_dir, 'main_agent.log')),
         logging.StreamHandler()
     ]
 )
@@ -46,7 +48,7 @@ logger = logging.getLogger("main_agent")
 class MainAgent:
     """主Agent类，负责向服务器注册、发送心跳、获取任务并创建子Agent执行"""
     
-    def __init__(self, name=None, server_url=None):
+    def __init__(self, name=None, server_url=None, reject_new_task=False):
         """初始化主Agent
         
         Args:
@@ -60,10 +62,13 @@ class MainAgent:
         self.running = False
         self.heartbeat_thread = None
         self.start_time = datetime.now()
+        self.reject_new_task = reject_new_task
         
         # 资源信息
         self.resource_util = get_resource_util()
-        self.resource_info = self.get_resource_info()
+        self.resource_info = self.resource_util.get_resource_info(os.getpid())
+        self.locked_cpu_cores = 0
+        self.locked_gpu_ids = []
         
         # 子进程管理
         self.sub_agents = {}  # 键为子Agent ID，值为子进程对象
@@ -107,62 +112,39 @@ class MainAgent:
             logger.error(f"主Agent注册异常: {str(e)}")
             return False
     
-    def start_heartbeat(self):
-        """启动心跳线程"""
-        if self.heartbeat_thread is not None and self.heartbeat_thread.is_alive():
-            logger.warning("心跳线程已经在运行")
-            return
-        
-        def heartbeat_task():
-            while self.running:
-                try:
-                    self.send_heartbeat()
-                except Exception as e:
-                    logger.error(f"发送心跳异常: {str(e)}")
-                
-                # 等待下一次心跳
-                time.sleep(Config.MAIN_AGENT_HEARTBEAT_INTERVAL)
-        
-        self.heartbeat_thread = threading.Thread(target=heartbeat_task, daemon=True)
-        self.heartbeat_thread.start()
-        logger.info("心跳线程已启动")
-    
-    def get_resource_info(self):
-        """获取资源使用情况
-        
-        Returns:
-            dict: 资源信息
-        """
-        # 获取基本资源信息
-        resource_info = self.resource_util.get_resource_info()
-        
-        # 计算运行时间（秒）
-        running_time = int((datetime.now() - self.start_time).total_seconds())
-        resource_info['running_time'] = running_time
-        
-        return resource_info
-    
     def send_heartbeat(self):
         """向服务器发送心跳并处理响应
         
         Returns:
             bool: 心跳是否成功
         """
-        if not self.id:
-            logger.error("发送心跳失败: Agent未注册")
-            return False
         
         try:
             url = f"{self.server_url}/api/agents/{self.id}/heartbeat"
+
+            # 检查子Agent进程
+            for task_id, [process, cpu_cores, gpu_ids] in list(self.sub_agents.items()):
+                if process.poll() is not None:
+                    logger.info(f"子Agent进程已结束: 任务ID={task_id}, PID={process.pid}")
+                    with self.sub_agent_lock:
+                        del self.sub_agents[task_id]
+                        self.locked_cpu_cores -= cpu_cores
+                        self.locked_gpu_ids = [gid for gid in self.locked_gpu_ids if gid not in gpu_ids]
             
             # 获取最新资源信息
-            resource_info = self.get_resource_info()
-            
+            resource_info = self.resource_util.get_resource_info(os.getpid())
+            resource_info["available_cpu_cores"] = resource_info["cpu_cores"] - self.locked_cpu_cores
+            for gpu_unit in resource_info["gpu_info"]:
+                if gpu_unit["gpu_id"] in self.locked_gpu_ids:
+                    gpu_unit["is_available"] = False
+            resource_info["reject_new_task"] = self.reject_new_task
+
             data = {
                 'resource_info': resource_info
             }
             
             response = requests.post(url, json=data)
+            logger.info(f"{'='*10} 心跳发送完成 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {'='*10}")
             
             if response.status_code == 200:
                 result = response.json()
@@ -186,27 +168,30 @@ class MainAgent:
         Args:
             response: 服务器响应数据
                 {
-                    'action': 操作类型，如'continue', 'new_task', 'stop',
+                    'action': 操作类型，如'continue', 'new_task', 'reject_new_task', 'accept_new_task', 'quit'
                     'task': 如果action='new_task'，则包含新任务信息
                 }
         """
         action = response.get('action', 'continue')
+        print(response)
         
         if action == 'new_task':
             # 获取新任务
             task = response.get('task')
-            if task:
-                logger.info(f"收到新任务: ID={task['id']}, 名称={task['name']}")
-                
-                # 创建子Agent执行任务
-                threading.Thread(
-                    target=self.create_sub_agent,
-                    args=(task,),
-                    daemon=True
-                ).start()
+            logger.info(f"收到新任务: ID={task['id']}, 名称={task['name']}")
+            
+            # 创建子Agent执行任务
+            self.create_sub_agent(task)
         
-        elif action == 'stop':
-            # 停止Agent
+        elif action == 'reject_new_task':
+            logger.info("收到指令:拒绝新任务")
+            self.reject_new_task = True
+        
+        elif action == 'accept_new_task':
+            logger.info("收到指令:接受新任务")
+            self.reject_new_task = False
+        
+        elif action == 'quit':
             logger.info("收到停止指令，准备退出")
             self.cleanup()
     
@@ -221,24 +206,10 @@ class MainAgent:
         """
         try:
             # 确定要分配的资源
-            cpu_cores = task.get('cpu_cores')
-            gpu_count = task.get('gpu_count', 0)
-            gpu_memory = task.get('gpu_memory', 0)
-            
-            # 创建子Agent名称
-            task_id = task['id']
-            sub_agent_name = f"sub_{self.name}_{task_id}"
-            
-            # 选择GPU
-            selected_gpus = []
-            if gpu_count > 0 and self.resource_info['gpu_ids']:
-                # 简单策略：选择前N个GPU
-                available_gpus = self.resource_info['gpu_ids']
-                selected_gpus = available_gpus[:gpu_count]
-                
-                if len(selected_gpus) < gpu_count:
-                    logger.error(f"GPU资源不足: 需要={gpu_count}, 可用={len(available_gpus)}")
-                    return False
+            cpu_cores = task.get('cpu_cores', 0)
+            gpu_ids = task.get('gpu_ids', [])
+            self.locked_cpu_cores += cpu_cores
+            self.locked_gpu_ids += gpu_ids
             
             # 准备子Agent脚本路径
             sub_agent_script = os.path.join(ROOT_DIR, 'agent', 'sub_agent.py')
@@ -248,42 +219,27 @@ class MainAgent:
                 sys.executable,  # Python解释器
                 sub_agent_script,
                 '--main-id', self.id,
-                '--task-id', str(task_id),
-                '--name', sub_agent_name,
+                '--task', json.dumps(task),
                 '--server', self.server_url
             ]
             
-            # 添加CPU核心数
-            if cpu_cores:
-                command.extend(['--cpu-cores', str(cpu_cores)])
-            
-            # 添加GPU参数
-            if selected_gpus:
-                gpu_str = ','.join(selected_gpus)
-                command.extend(['--gpu-ids', gpu_str])
-            
             # 启动子Agent进程
-            logger.info(f"启动子Agent: 任务ID={task_id}, CPU核心={cpu_cores}, GPU={selected_gpus}")
-            
-            # 创建日志文件
-            log_dir = os.path.join(ROOT_DIR, 'data', 'logs', 'system')
-            log_file = os.path.join(log_dir, f"sub_agent_{task_id}.log")
-            
-            with open(log_file, 'w') as log_f:
-                process = subprocess.Popen(
-                    command,
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                    cwd=ROOT_DIR
-                )
+            logger.info(f"启动子Agent: 任务ID={task['id']}, CPU核心={cpu_cores}, GPU={gpu_ids}")
+            process = subprocess.Popen(
+                command,
+                # stdout=subprocess.DEVNULL,
+                # stderr=subprocess.DEVNULL,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                cwd=ROOT_DIR
+            )
             
             # 记录子进程信息
             with self.sub_agent_lock:
-                self.sub_agents[task_id] = process
+                self.sub_agents[task['id']] = [process, cpu_cores, gpu_ids]
             
-            logger.info(f"子Agent启动成功: 任务ID={task_id}, PID={process.pid}")
+            logger.info(f"子Agent启动成功: 任务ID={task['id']}, PID={process.pid}")
             
-            # 向服务器注册子Agent（由子Agent自己完成）
             return True
         except Exception as e:
             logger.error(f"创建子Agent失败: 任务ID={task.get('id')}, 错误={str(e)}")
@@ -298,7 +254,7 @@ class MainAgent:
         
         # 终止所有子进程
         with self.sub_agent_lock:
-            for task_id, process in self.sub_agents.items():
+            for task_id, [process, cpu_cores, gpu_ids] in self.sub_agents.items():
                 try:
                     logger.info(f"终止子Agent进程: 任务ID={task_id}, PID={process.pid}")
                     process.terminate()
@@ -327,12 +283,15 @@ class MainAgent:
         self.running = True
         
         # 开始心跳
-        self.start_heartbeat()
-        
         try:
-            # 主循环，保持进程运行
             while self.running:
-                time.sleep(1)
+                try:
+                    self.send_heartbeat()
+                except Exception as e:
+                    logger.error(f"心跳异常: {str(e)}")
+                
+                # 等待下一次心跳
+                time.sleep(Config.MAIN_AGENT_HEARTBEAT_INTERVAL)
         except KeyboardInterrupt:
             logger.info("收到中断信号，准备退出")
         finally:

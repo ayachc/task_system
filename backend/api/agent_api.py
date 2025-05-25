@@ -198,12 +198,8 @@ def handle_heartbeat(agent_id):
                 'message': "请求数据无效，需要JSON格式"
             }), 400
         
-        # 提取资源信息
-        resource_info = data.get('resource_info', {})
-        task_info = data.get('task_info')
-        
         # 处理心跳
-        response = agent_service.handle_heartbeat(agent_id, resource_info, task_info)
+        response = agent_service.handle_heartbeat(agent_id, data)
         
         return jsonify({
             'success': True,
@@ -214,24 +210,4 @@ def handle_heartbeat(agent_id):
         return jsonify({
             'success': False,
             'message': f"处理Agent心跳失败: {str(e)}"
-        }), 500
-
-@agent_bp.route('/check-status', methods=['POST'])
-def check_agents_status():
-    """检查所有Agent状态"""
-    try:
-        count = agent_service.check_agents_status()
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'offline_count': count
-            },
-            'message': f"已检查Agent状态，{count}个Agent被标记为离线"
-        }), 200
-    except Exception as e:
-        system_logger.error(f"检查Agent状态失败: {str(e)}")
-        return jsonify({
-            'success': False,
-            'message': f"检查Agent状态失败: {str(e)}"
         }), 500

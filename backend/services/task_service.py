@@ -60,9 +60,9 @@ class TaskService:
         # 记录任务创建日志
         if task:
             logger = get_task_logger(task.id)
-            logger.info(f"任务创建成功: ID={task.id}, 名称={name}, 优先级={priority}")
+            logger.info(f"create_task: ID={task.id}, name={name}, priority={priority}")
             if depends_on and task.status == 'blocked':
-                logger.info(f"任务已阻塞: 等待依赖任务完成: {depends_on}")
+                logger.info(f"task blocked: ID={task.id}, depends_on={depends_on}")
         
         return task
     
@@ -224,12 +224,12 @@ class TaskService:
         # 状态变更记录
         if original_task.status != task.status:
             logger = get_task_logger(task.id)
-            logger.info(f"任务状态变更: {original_task.status} -> {task.status}")
+            logger.info(f"task status changed: {original_task.status} -> {task.status}")
             
             # 任务开始执行时记录开始时间
             if task.status == 'running' and not task.start_time:
                 task.start_time = datetime.now()
-                logger.info(f"任务开始执行: 时间={task.start_time}")
+                logger.info(f"task started: time={task.start_time}")
             
             # 任务完成或失败时记录结束时间和执行时长
             if task.status in ['completed', 'failed'] and not task.end_time:
@@ -237,7 +237,7 @@ class TaskService:
                 if task.start_time:
                     duration = (task.end_time - task.start_time).total_seconds()
                     task.execution_time = int(duration)
-                    logger.info(f"任务执行结束: 时间={task.end_time}, 耗时={task.execution_time}秒")
+                    logger.info(f"task finished: time={task.end_time}, duration={task.execution_time} seconds")
         
         return task.update_task()
     
@@ -313,8 +313,8 @@ class TaskService:
             # 追加日志内容
             with open(task.log_file, 'a', encoding='utf-8') as f:
                 f.write(log_content)
-                if not log_content.endswith('\n'):
-                    f.write('\n')
+                # if not log_content.endswith('\n'):
+                #     f.write('\n')
             
             return True
         except Exception as e:
@@ -359,8 +359,22 @@ class TaskService:
                 }
             
             # 读取日志文件
-            with open(task.log_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            # 首先尝试使用UTF-8编码
+            try:
+                with open(task.log_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+            except UnicodeDecodeError:
+                # 如果UTF-8解码失败，尝试使用系统默认编码（Windows上通常是cp936/GBK）
+                try:
+                    with open(task.log_file, 'r', encoding='cp936') as f:
+                        lines = f.readlines()
+                except UnicodeDecodeError:
+                    # 如果GBK也失败，使用二进制模式读取并用errors='replace'处理解码错误
+                    with open(task.log_file, 'rb') as f:
+                        binary_content = f.read()
+                        # 尝试解码，遇到错误时替换为�符号
+                        content = binary_content.decode('utf-8', errors='replace')
+                        lines = content.splitlines(True)  # 保留换行符
             
             total_lines = len(lines)
             start_line = min(start_line, total_lines - 1) if total_lines > 0 else 0
@@ -405,7 +419,7 @@ class TaskService:
         waiting_tasks = self.db.fetch_all(query)
         
         if not waiting_tasks:
-            return None
+            return None, None
         
         # 检查每个任务是否满足依赖条件
         for task_data in waiting_tasks:
@@ -444,15 +458,18 @@ class TaskService:
                 can_execute = False
             
             # 检查GPU资源
-            gpu_needed = task.gpu_count or 0
-            if gpu_needed > 0:
-                available_gpus = len(agent.available_gpu_ids) if agent.available_gpu_ids else 0
-                if available_gpus < gpu_needed:
+            gpu_ids = []
+            if task.gpu_count and task.gpu_memory:
+                for gpu_i in agent.gpu_info:
+                    if gpu_i["is_available"] == False:
+                        continue
+                    if task.gpu_memory <= gpu_i["memory_total"]:
+                        gpu_ids.append(gpu_i["gpu_id"])
+                if len(gpu_ids) < task.gpu_count:
                     can_execute = False
-            
             # 如果资源满足，返回该任务
             if can_execute:
-                return task
+                return task, gpu_ids
         
         # 没有找到合适的任务
-        return None
+        return None, None

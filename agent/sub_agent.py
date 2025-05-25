@@ -11,7 +11,6 @@ import os
 import sys
 import time
 import json
-import uuid
 import logging
 import requests
 import subprocess
@@ -47,44 +46,48 @@ logger = logging.getLogger("sub_agent")
 class SubAgent:
     """子Agent类，负责执行单个任务并上报状态"""
     
-    def __init__(self, main_agent_id, task_id, name=None, server_url=None, 
-                 cpu_cores=None, gpu_ids=None):
+    def __init__(self, main_agent_id, task, server_url=None):
         """初始化子Agent
         
         Args:
             main_agent_id: 主Agent ID
-            task_id: 任务ID
-            name: Agent名称，默认为"sub_agent_{task_id}"
-            server_url: 服务器URL，默认使用配置中的URL
+            task: 任务
+            server_url: 服务器URL
             cpu_cores: 分配的CPU核心数
             gpu_ids: 分配的GPU ID列表
         """
         # 基本信息
         self.id = None
         self.main_agent_id = main_agent_id
-        self.task_id = task_id
-        self.name = name or f"sub_agent_{task_id}"
-        self.server_url = server_url or Config.SERVER_URL
+        self.task = task
+        self.task_id = task['id']
+        self.name = f"sub_agent_for_task_{task['id']}"
+        self.server_url = server_url
         self.running = False
         self.heartbeat_thread = None
         self.start_time = datetime.now()
         
         # 资源信息
-        self.cpu_cores = cpu_cores
-        self.gpu_ids = gpu_ids.split(',') if isinstance(gpu_ids, str) and gpu_ids else \
-                     (gpu_ids or [])
+        self.cpu_cores = task['cpu_cores']
+        self.gpu_ids = task['gpu_ids']
         self.resource_util = get_resource_util()
         
         # 任务执行
         self.task_process = None
         self.task_output_thread = None
         self.task_output_buffer = []
-        self.task_status = "waiting"  # waiting, running, completed, failed
+        self.task_status = "waiting"  # blocked, waiting, running, completed, failed, canceled
         self.task_start_time = None
         self.task_script_file = None
         
-        # 确保日志目录存在
-        os.makedirs(os.path.join(ROOT_DIR, 'data', 'logs', 'system'), exist_ok=True)
+        # 创建日志目录
+        self.log_dir = os.path.join(ROOT_DIR, 'data', 'logs', 'agents')
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # 设置子Agent的日志输出到文件
+        file_handler = logging.FileHandler(os.path.join(self.log_dir, f"{self.name}.log"))
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(file_handler)
         
         logger.info(f"子Agent初始化完成: 名称={self.name}, 主Agent={self.main_agent_id}, 任务={self.task_id}")
         logger.info(f"资源分配: CPU核心数={self.cpu_cores}, GPU={self.gpu_ids}")
@@ -101,8 +104,6 @@ class SubAgent:
                 'name': self.name,
                 'main_agent_id': self.main_agent_id,
                 'task_id': self.task_id,
-                'cpu_cores': self.cpu_cores,
-                'gpu_ids': self.gpu_ids
             }
             
             response = requests.post(url, json=data)
@@ -118,16 +119,11 @@ class SubAgent:
             else:
                 logger.error(f"子Agent注册失败: HTTP状态码={response.status_code}")
             
-            return False
         except Exception as e:
             logger.error(f"子Agent注册异常: {str(e)}")
-            return False
     
     def start_heartbeat(self):
         """启动心跳线程"""
-        if self.heartbeat_thread is not None and self.heartbeat_thread.is_alive():
-            logger.warning("心跳线程已经在运行")
-            return
         
         def heartbeat_task():
             while self.running:
@@ -143,28 +139,6 @@ class SubAgent:
         self.heartbeat_thread.start()
         logger.info("心跳线程已启动")
     
-    def get_resource_info(self):
-        """获取资源使用情况
-        
-        Returns:
-            dict: 资源信息
-        """
-        # 获取当前进程ID
-        pid = os.getpid()
-        
-        # 如果任务进程在运行，使用任务进程ID
-        if self.task_process and self.task_process.poll() is None:
-            pid = self.task_process.pid
-        
-        # 获取资源信息
-        resource_info = self.resource_util.get_resource_info(pid)
-        
-        # 计算运行时间（秒）
-        running_time = int((datetime.now() - self.start_time).total_seconds())
-        resource_info['running_time'] = running_time
-        
-        return resource_info
-    
     def send_heartbeat(self):
         """向服务器发送心跳
         
@@ -179,7 +153,9 @@ class SubAgent:
             url = f"{self.server_url}/api/agents/{self.id}/heartbeat"
             
             # 获取最新资源信息
-            resource_info = self.get_resource_info()
+            resource_info = self.resource_util.get_resource_info(os.getpid())
+            resource_info["available_cpu_cores"] = self.cpu_cores
+            resource_info["gpu_info"] = [gpu for gpu in resource_info["gpu_info"] if gpu["gpu_id"] in self.gpu_ids]
             
             # 准备任务信息
             task_info = {
@@ -208,9 +184,9 @@ class SubAgent:
                 if result.get('success'):
                     # 处理服务器响应
                     action = result['data'].get('action', 'continue')
-                    if action == 'stop':
+                    if action == 'quit':
                         logger.info("收到停止指令，准备退出")
-                        self.running = False
+                        self.close()
                     
                     return True
                 else:
@@ -223,40 +199,35 @@ class SubAgent:
             logger.error(f"心跳发送异常: {str(e)}")
             return False
     
-    def start_task(self):
+    def run_task(self):
         """启动任务执行
         
         Returns:
             bool: 启动是否成功
         """
         try:
-            # 获取任务信息
-            url = f"{self.server_url}/api/tasks/{self.task_id}"
-            response = requests.get(url)
-            
-            if response.status_code != 200:
-                logger.error(f"获取任务信息失败: HTTP状态码={response.status_code}")
-                return False
-            
-            result = response.json()
-            if not result.get('success'):
-                logger.error(f"获取任务信息失败: {result.get('message', '未知错误')}")
-                return False
-            
-            task = result['data']
+            task = self.task
             script_content = task.get('script_content')
             
             if not script_content:
                 logger.error("任务脚本内容为空")
                 return False
             
-            # 创建临时脚本文件
-            with tempfile.NamedTemporaryFile(suffix='.sh', delete=False) as temp:
+            # 检测操作系统类型
+            is_windows = sys.platform.startswith('win')
+            
+            # 创建临时脚本文件，Windows 使用 .bat 后缀，其他系统使用 .sh
+            suffix = '.bat' if is_windows else '.sh'
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode='wb') as temp:
                 self.task_script_file = temp.name
+                # 对于 Windows，确保使用 CRLF 行尾
+                if is_windows:
+                    script_content = script_content.replace('\n', '\r\n')
                 temp.write(script_content.encode('utf-8'))
             
-            # 修改脚本文件权限
-            os.chmod(self.task_script_file, 0o755)
+            # 在非 Windows 系统上设置执行权限
+            if not is_windows:
+                os.chmod(self.task_script_file, 0o755)
             
             # 准备环境变量
             env = os.environ.copy()
@@ -265,59 +236,74 @@ class SubAgent:
             if self.gpu_ids:
                 env['CUDA_VISIBLE_DEVICES'] = ','.join(self.gpu_ids)
             
-            # 启动任务进程
+            # 启动任务进程，将输出重定向到文件
             logger.info(f"启动任务执行: 脚本文件={self.task_script_file}")
             self.task_status = "running"
             self.task_start_time = datetime.now()
             
             # 添加任务开始标记到日志
-            self.task_output_buffer.append(f"=================== 任务开始执行: {self.task_start_time} ===================\n")
+            self.task_output_buffer.append(f"=================== start: {self.task_start_time} ===================\n")
+            
+            # 设置任务日志文件
+            self.task_log_file = os.path.join(self.log_dir, f"task_{self.task_id}.log")
             
             # 启动进程
-            self.task_process = subprocess.Popen(
-                ['/bin/bash', self.task_script_file],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                text=True,
-                bufsize=1  # 行缓冲
-            )
-            
-            # 启动输出读取线程
-            self.task_output_thread = threading.Thread(
-                target=self.read_task_output,
-                daemon=True
-            )
-            self.task_output_thread.start()
-            
+            with open(self.task_log_file, 'w', buffering=1) as log_file:  # 使用行缓冲
+                # 根据操作系统类型选择不同的启动方式
+                if sys.platform.startswith('win'):
+                    # Windows 上直接执行脚本文件
+                    self.task_process = subprocess.Popen(
+                        self.task_script_file,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        shell=True,  # Windows 上需要 shell=True 来执行批处理文件
+                        text=True,
+                        bufsize=1    # 使用行缓冲
+                    )
+                else:
+                    # Linux/macOS 上使用 bash 执行
+                    self.task_process = subprocess.Popen(
+                        ['/bin/bash', self.task_script_file],
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        text=True,
+                        bufsize=1    # 使用行缓冲
+                    )
             logger.info(f"任务进程已启动: PID={self.task_process.pid}")
-            return True
-        except Exception as e:
-            logger.error(f"启动任务执行失败: {str(e)}")
-            self.task_status = "failed"
-            self.task_output_buffer.append(f"启动任务执行失败: {str(e)}\n{traceback.format_exc()}\n")
-            return False
-    
-    def read_task_output(self):
-        """读取任务输出"""
-        try:
-            for line in iter(self.task_process.stdout.readline, ''):
-                if not line:
-                    break
-                
-                # 将输出添加到缓冲区
-                with threading.Lock():
-                    self.task_output_buffer.append(line)
             
-            # 等待进程结束
-            exit_code = self.task_process.wait()
+            # 确保日志文件存在
+            while not os.path.exists(self.task_log_file) and self.running:
+                time.sleep(0.1)
+
+            # 使用单独的文件句柄读取日志    
+            with open(self.task_log_file, 'r') as f:
+                # 跳到文件末尾
+                f.seek(0, 2)
+                
+                # 循环直到进程结束
+                while True:
+                    line = f.readline()
+                    if line:
+                        # 将输出添加到缓冲区
+                        with threading.Lock():
+                            self.task_output_buffer.append(line)
+                    else:
+                        if self.task_process.poll() is not None:
+                            break
+                        # 没有新内容，短暂等待
+                        time.sleep(0.1)
+
+            # 获取退出码 - 现在只需获取一次，因为poll()已经检测到进程结束
+            exit_code = self.task_process.returncode
             
             # 进程结束，记录状态
             end_time = datetime.now()
             duration = (end_time - self.task_start_time).total_seconds() if self.task_start_time else 0
             
             # 添加任务结束标记到日志
-            end_message = f"=================== 任务执行结束: {end_time}, 耗时: {duration:.2f}秒, 退出码: {exit_code} ===================\n"
+            end_message = f"=================== end: {end_time}, time: {duration:.2f}s, exit_code: {exit_code} ===================\n"
             with threading.Lock():
                 self.task_output_buffer.append(end_message)
             
@@ -329,25 +315,20 @@ class SubAgent:
                 self.task_status = "failed"
                 logger.error(f"任务执行失败: 退出码={exit_code}, 耗时={duration:.2f}秒")
             
-            # 发送最后一次心跳
-            self.send_heartbeat()
-            
             # 任务完成，可以退出
             self.running = False
-        except Exception as e:
-            logger.error(f"读取任务输出失败: {str(e)}")
-            self.task_status = "failed"
-            
-            with threading.Lock():
-                self.task_output_buffer.append(f"读取任务输出失败: {str(e)}\n{traceback.format_exc()}\n")
-            
+
             # 发送最后一次心跳
             self.send_heartbeat()
-            
-            # 任务失败，可以退出
-            self.running = False
+
+            return True
+        except Exception as e:
+            logger.error(f"启动任务执行失败: {str(e)}")
+            self.task_status = "failed"
+            self.task_output_buffer.append(f"failed: {str(e)}\n{traceback.format_exc()}\n")
+            return False
     
-    def cleanup(self):
+    def close(self):
         """清理资源并退出"""
         logger.info("开始清理资源...")
         
@@ -384,78 +365,27 @@ class SubAgent:
         
         logger.info("资源清理完成")
     
+
+    
     def run(self):
         """运行子Agent"""
         logger.info("子Agent开始运行...")
         
         # 注册Agent
-        if not self.register():
-            logger.error("注册失败，Agent无法启动")
-            return False
+        self.register()
         
         # 设置运行标志
         self.running = True
         
         # 开始心跳
         self.start_heartbeat()
-        
-        # 启动任务执行
-        if not self.start_task():
-            logger.error("任务启动失败")
-            self.running = False
-            return False
-        
-        try:
-            # 主循环，等待任务完成
-            while self.running:
-                time.sleep(1)
-                
-                # 检查任务进程是否仍在运行
-                if self.task_process and self.task_process.poll() is not None:
-                    # 任务进程已结束，等待一会以确保输出线程完成处理
-                    time.sleep(2)
-                    break
-        except KeyboardInterrupt:
-            logger.info("收到中断信号，准备退出")
-            self.task_status = "failed"
-        finally:
-            # 清理资源
-            self.cleanup()
-        
-        return self.task_status == "completed"
 
+        # 启动任务
+        self.run_task()
 
-def setup_sub_agent(main_agent_id, task_id, name=None, server_url=None,
-                   cpu_cores=None, gpu_ids=None):
-    """设置并运行子Agent
-    
-    Args:
-        main_agent_id: 主Agent ID
-        task_id: 任务ID
-        name: Agent名称
-        server_url: 服务器URL
-        cpu_cores: CPU核心数
-        gpu_ids: GPU ID列表或逗号分隔的字符串
-        
-    Returns:
-        bool: 运行是否成功
-    """
-    try:
-        # 创建子Agent
-        agent = SubAgent(
-            main_agent_id=main_agent_id,
-            task_id=task_id,
-            name=name,
-            server_url=server_url,
-            cpu_cores=cpu_cores,
-            gpu_ids=gpu_ids
-        )
-        
-        # 运行子Agent
-        return agent.run()
-    except Exception as e:
-        logger.error(f"运行子Agent失败: {str(e)}")
-        return False
+        # 结束agent
+        self.close()
+
 
 
 if __name__ == "__main__":
@@ -464,23 +394,18 @@ if __name__ == "__main__":
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="子Agent程序")
     parser.add_argument("--main-id", required=True, help="主Agent ID")
-    parser.add_argument("--task-id", required=True, help="任务ID")
-    parser.add_argument("--name", help="Agent名称")
+    parser.add_argument("--task", required=True, help="任务")
     parser.add_argument("--server", help="服务器URL")
-    parser.add_argument("--cpu-cores", type=int, help="CPU核心数")
-    parser.add_argument("--gpu-ids", help="GPU IDs，逗号分隔")
     
     args = parser.parse_args()
     
-    # 运行子Agent
-    success = setup_sub_agent(
-        main_agent_id=args.main_id,
-        task_id=args.task_id,
-        name=args.name,
-        server_url=args.server,
-        cpu_cores=args.cpu_cores,
-        gpu_ids=args.gpu_ids
-    )
-    
-    # 设置退出码
-    sys.exit(0 if success else 1)
+    try:
+        # 创建子Agent
+        agent = SubAgent(
+            main_agent_id=args.main_id,
+            task=json.loads(args.task),
+            server_url=args.server,
+        )
+        agent.run()
+    except Exception as e:
+        logger.error(f"运行子Agent失败: {str(e)}")

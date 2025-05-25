@@ -161,7 +161,6 @@ class Task:
             depends_on=depends_on,
             **task_data
         )
-        
         return task
     
     @classmethod

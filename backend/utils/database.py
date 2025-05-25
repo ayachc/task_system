@@ -151,7 +151,8 @@ class Database:
             running_time INTEGER DEFAULT 0,
             cpu_cores INTEGER,
             cpu_usage REAL DEFAULT 0,
-            memory_usage REAL DEFAULT 0,
+            memory_used INTEGER DEFAULT 0,
+            memory_total INTEGER DEFAULT 0,
             gpu_info TEXT DEFAULT '[]',
             task_id INTEGER,
             main_agent_id TEXT,
@@ -172,7 +173,7 @@ class Database:
         ''')
         
         logger.info("数据库表结构初始化完成")
-
+    
 # 创建全局数据库实例
 db = Database()
 

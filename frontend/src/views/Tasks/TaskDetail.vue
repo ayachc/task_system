@@ -306,7 +306,7 @@ export default {
         const response = await this.fetchTaskLog({
           taskId: this.id
         })
-        this.taskLog = response.log || ''
+        this.taskLog = response.content || ''
         
         // 自动滚动到日志底部
         this.$nextTick(() => {
@@ -437,5 +437,6 @@ export default {
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.85rem;
   white-space: pre-wrap;
+  color: #f8f9fa; /* 明确设置文字颜色为亮色 */
 }
 </style>
